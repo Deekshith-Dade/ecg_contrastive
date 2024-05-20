@@ -155,6 +155,13 @@ class PatientECGDatasetLoader(Dataset):
                     ecgs = ecgs / tch.max(ecgs)
                 else:
                     print(f'All zero data for item {item}, {ecgPath}')
+            elif self.normMethod == 'unitrange':
+                if not tch.allclose(ecgs, tch.zeros_like(ecgs)):
+                    ecgs = ecgs - tch.min(ecgs)
+                    ecgs = ecgs / tch.max(ecgs)
+                    ecgs = ecgs - 0.5 
+                else:
+                    print(f'All zero data for item {item}, {ecgPath}')
         
         if tch.any(tch.isnan(ecgs)):
             print(f"NANs in the data for item {item}, {ecgPath}")
