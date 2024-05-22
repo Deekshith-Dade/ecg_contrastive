@@ -63,41 +63,36 @@ class BaselineConvNet(nn.Module):
         Returns:
             h(torch.Tensor): Output tensor of shape (batch_size, 1, 128) if avg_embeddings is True else (batch_size, 8, 128) and (batch_size, 1) if classification is True else (batch_size, 1) if classification
         """
+        
+        batch_size = x.shape[0]
+        nviews = x.shape[1]
         if self.classification:
-            h = self.batch_norm1(self.activation(self.conv1(x)))
-            h = self.batch_norm2(self.activation(self.conv2(h)))
-            h = self.batch_norm3(self.activation(self.conv3(h)))
-            h = self.batch_norm4(self.activation(self.conv4(h)))
-            h = self.batch_norm5(self.activation(self.conv5(h)))
-            h = self.batch_norm6(self.activation(self.conv6(h)))
-            h = self.avg_pool(h)
-            h = nn.Flatten()(h)
-            h = self.finalLayer(h)
-        else:
-            batch_size = x.shape[0]
-            nviews = x.shape[1]
+            self.avg_embeddings = True
 
-            h = torch.empty(batch_size, nviews, 256, device=x.device)
+        h = torch.empty(batch_size, nviews, 256, device=x.device)
 
-            for i in range(nviews):
-                x_i = x[:, i, :].unsqueeze(1)
+        for i in range(nviews):
+            x_i = x[:, i, :].unsqueeze(1)
 
-                x_i = self.batch_norm1(self.activation(self.conv1(x_i)))
-                x_i = self.batch_norm2(self.activation(self.conv2(x_i)))
-                x_i = self.batch_norm3(self.activation(self.conv3(x_i)))
-                x_i = self.batch_norm4(self.activation(self.conv4(x_i)))
-                x_i = self.batch_norm5(self.activation(self.conv5(x_i)))
-                x_i = self.batch_norm6(self.activation(self.conv6(x_i)))
-                x_i = self.avg_pool(x_i)
-                x_i = nn.Flatten()(x_i)
+            x_i = self.batch_norm1(self.activation(self.conv1(x_i)))
+            x_i = self.batch_norm2(self.activation(self.conv2(x_i)))
+            x_i = self.batch_norm3(self.activation(self.conv3(x_i)))
+            x_i = self.batch_norm4(self.activation(self.conv4(x_i)))
+            x_i = self.batch_norm5(self.activation(self.conv5(x_i)))
+            x_i = self.batch_norm6(self.activation(self.conv6(x_i)))
+            x_i = self.avg_pool(x_i)
+            x_i = nn.Flatten()(x_i)
 
-                h[:, i, :] = x_i
+            h[:, i, :] = x_i
 
 
-            if self.avg_embeddings:
-                h = h.mean(dim=1, keepdim=True)
+        if self.avg_embeddings:
+            h = h.mean(dim=1, keepdim=True)
 
-            h = self.finalLayer(h)
+        h = self.finalLayer(h)
+
+        if self.classification:
+            h = h.squeeze(1)
 
         return h
         

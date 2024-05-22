@@ -43,8 +43,9 @@ class SimCLR(object):
         self.n_views = 2
         self.fp16_precision = False
         self.temperature = 0.1
-        self.epochs = 40
-        self.warmup_epochs = 30
+        self.epochs = 250
+        self.warmup_epochs = 50
+        self.checkpoint_freq = 10
 
 
         self.writer = SummaryWriter()
@@ -194,12 +195,13 @@ class SimCLR(object):
             logging.debug(f"Epoch: {epoch_counter}\tLoss: {loss}\tTop1 accuracy: {top1[0]}\tTop5 accuracy: {top5[0]}")
 
             # save model checkpoints
-            checkpoint_name = 'checkpoint_{:04d}.pth.tar'.format(epoch_counter)
-            save_checkpoint({
-                'epoch': self.epochs,
-                # 'arch': self.args.arch,
-                'state_dict': self.model.state_dict(),
-                'optimizer': self.optimizer.state_dict(),
-            }, is_best=False, filename=os.path.join(self.writer.log_dir, checkpoint_name))
-            logging.info(f"Model checkpoint and metadata has been saved at {self.writer.log_dir}.")
+            if epoch_counter % self.checkpoint_freq == 0:
+                checkpoint_name = 'checkpoint_{:04d}.pth.tar'.format(epoch_counter)
+                save_checkpoint({
+                    'epoch': self.epochs,
+                    # 'arch': self.args.arch,
+                    'state_dict': self.model.state_dict(),
+                    'optimizer': self.optimizer.state_dict(),
+                }, is_best=False, filename=os.path.join(self.writer.log_dir, checkpoint_name))
+                logging.info(f"Model checkpoint and metadata has been saved at {self.writer.log_dir}.")
         logging.info("Training has finished.")

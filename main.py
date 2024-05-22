@@ -32,13 +32,14 @@ def main():
     seed = 42
     seed_everything(seed)
 
-    normEcgs = False
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     gpuIds = range(torch.cuda.device_count())
     dataDir = '/usr/sci/cibc/Maprodxn/ClinicalECGData/LVEFCohort/pythonData/'
     
     batch_size = 512
     lr = 1e-3
+    normEcgs = False
+
 
     # Dataset
     with open('patient_splits/pre_train_patients.pkl', 'rb') as file:

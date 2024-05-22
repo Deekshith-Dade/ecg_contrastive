@@ -87,15 +87,16 @@ def train(model, trainDataLoader, testDataLoader, numEpoch, optimizer):
             best_auc_test = auc_test
         
 
-        plt.figure(1)
-        fig, ax1 = plt.subplots(1, 2)
+        # plt.figure(1)
+        # fig, ax1 = plt.subplots(1, 2)
 
-        print(f'Train AUC: {auc_train:0.3f} test AUC: {auc_test:0.3f}')
-        ax1[0].plot(falsePos_train, truePos_train)
-        ax1[0].set_title(f'ROC train, AUC: {auc_train:0.3f}')
-        ax1[1].plot(falsePos_test, truePos_test)
-        ax1[1].set_title(f'ROC Test, AUC: {auc_test:0.3f}')
-        plt.suptitle(f'ROC curves train AUC: {auc_train:0.3f} test AUC: {auc_test:0.3f}')
+        print(f'Train AUC: {auc_train:0.6f} test AUC: {auc_test:0.6f}')
+        # ax1[0].plot(falsePos_train, truePos_train)
+        # ax1[0].set_title(f'ROC train, AUC: {auc_train:0.3f}')
+        # ax1[1].plot(falsePos_test, truePos_test)
+        # ax1[1].set_title(f'ROC Test, AUC: {auc_test:0.3f}')
+        # plt.suptitle(f'ROC curves train AUC: {auc_train:0.3f} test AUC: {auc_test:0.3f} @ Epoch {ep+1} of {numEpoch}')
         # plt.show()
 
     print(f"Best AUC Test: {best_auc_test}")
+    return best_auc_test

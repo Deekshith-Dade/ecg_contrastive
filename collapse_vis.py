@@ -12,7 +12,8 @@ gpuIds = list(range(tch.cuda.device_count()))
 
 args = dict(
     batch_size=500,
-    pretrained="runs/May19_20-36-19_cibcgpu4/checkpoint_0050.pth.tar",
+    # pretrained="runs/May20_16-04-46_cibcgpu4/checkpoint_0005.pth.tar",
+    pretrained="runs/May20_01-01-37_cibcgpu4/checkpoint_0200.pth.tar",
     perplexity=50,
 )
 
