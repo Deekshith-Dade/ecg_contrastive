@@ -39,6 +39,9 @@ class SimCLR(object):
         self.scheduler = kwargs['scheduler']
         self.lr = kwargs['lr']
         self.batch_size = kwargs['batch_size']
+        self.lead_groupings = kwargs['lead_groupings']
+        self.pretrained = kwargs['pretrained']
+        self.curr_epochs = 0 if kwargs['epoch'] is None else kwargs['epoch']
         
         self.n_views = 2
         self.fp16_precision = False
@@ -154,10 +157,14 @@ class SimCLR(object):
         acc1_meter = AverageMeter()
         acc5_meter = AverageMeter()
 
-        logging.info(f"Start SimCLR training for {self.epochs} epochs.")
+        info = f"from epoch {self.curr_epochs}" if self.epochs > 0 else ""
+        info+= f" with pretrained model {self.pretrained}" if self.pretrained else ""
+
+        logging.info(f"Start SimCLR training for {self.epochs} epochs.{info}")
+        print(f"Start SimCLR training for {self.epochs} epochs.{info}")
         logging.info(f"Training with initial learning rate lr={self.lr} and batch size={self.batch_size} and warmup epochs={self.warmup_epochs}.")
 
-        for epoch_counter in range(self.epochs):
+        for epoch_counter in range(self.curr_epochs+1, self.epochs):
             print(f"Epoch {epoch_counter}")
             for images, patientIds in tqdm(train_loader):
                 
@@ -195,10 +202,10 @@ class SimCLR(object):
             logging.debug(f"Epoch: {epoch_counter}\tLoss: {loss}\tTop1 accuracy: {top1[0]}\tTop5 accuracy: {top5[0]}")
 
             # save model checkpoints
-            if epoch_counter % self.checkpoint_freq == 0:
-                checkpoint_name = 'checkpoint_{:04d}.pth.tar'.format(epoch_counter)
+            if (epoch_counter) % self.checkpoint_freq == 0:
+                checkpoint_name = f"checkpoint{'_lead_groupings' if self.lead_groupings else ''}_{epoch_counter:04d}.pth.tar"
                 save_checkpoint({
-                    'epoch': self.epochs,
+                    'epoch': epoch_counter,
                     # 'arch': self.args.arch,
                     'state_dict': self.model.state_dict(),
                     'optimizer': self.optimizer.state_dict(),

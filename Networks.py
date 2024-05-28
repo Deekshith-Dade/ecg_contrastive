@@ -3,10 +3,11 @@ import torch.nn as nn
 
 class BaselineConvNet(nn.Module):
 
-    def __init__(self, classification=True, avg_embeddings=False):
+    def __init__(self, classification=False, avg_embeddings=False, lead_grouping=False):
         super(BaselineConvNet, self).__init__()
         self.classification = classification
         self.avg_embeddings = avg_embeddings
+        self.lead_grouping = lead_grouping
         self.conv1 = nn.Conv1d(in_channels=1, 
                                out_channels=16, 
                                kernel_size=7, 
@@ -85,6 +86,13 @@ class BaselineConvNet(nn.Module):
 
             h[:, i, :] = x_i
 
+        if self.lead_grouping:
+            h_0 = h[:,[0,1,6,7],:]
+            h_1 = h[:,[2,3,4,5],:]
+            h_0 = h_0.mean(1,keepdim=True)
+            h_1 = h_1.mean(1,keepdim=True)
+            h = torch.cat((h_0, h_1), dim=1)
+            self.avg_embeddings = False
 
         if self.avg_embeddings:
             h = h.mean(dim=1, keepdim=True)

@@ -1,4 +1,5 @@
 import random
+import logging
 
 import numpy as np
 import torch
@@ -6,6 +7,9 @@ import pickle
 import DataTools
 import Networks
 import Training
+import os
+
+from torch.utils.tensorboard import SummaryWriter
 
 import json
 import time
@@ -14,7 +18,7 @@ import time
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 args = dict(
-    pretrained="runs/May20_01-01-37_cibcgpu4/checkpoint_0200.pth.tar",
+    pretrained="runs/May24_16-51-42_cibcgpu3/checkpoint_lead_groupings_0100.pth.tar",
     batch_size=512,
 )
 
@@ -32,7 +36,7 @@ def seed_everything(seed=42):
 
     # For CPU operations (reproducibility)
     torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = True
+    torch.backends.cudnn.benchmark = False
 
 def dataprep(args):
     dataDir = '/usr/sci/cibc/Maprodxn/ClinicalECGData/LVEFCohort/pythonData/'
@@ -46,7 +50,7 @@ def dataprep(args):
         pre_train_patients = pickle.load(file)
     
     num_classification_patients = len(pre_train_patients)
-    finetuning_ratios =  [0.01] #[0.01, 0.05, 0.1, 0.5, 1.0]
+    finetuning_ratios =  [0.01, 0.05, 0.1, 0.5, 1.0]
     num_finetuning = [int(num_classification_patients * ratio) for ratio in finetuning_ratios]
     print(f"Number of Finetuning Patients: {num_finetuning}")
 
@@ -120,12 +124,19 @@ def create_model(args, baseline):
 
 
 def main(args):
-    seeds = [42] #[42, 43, 44, 45, 46]
+    seeds =  [42, 43, 44, 45, 46]
     results = {seed: [] for seed in seeds}
-    epochs = [200, 200, 50, 30, 30]
+    epochs = [250, 250, 50, 30, 30]
+    results_file = f"results_{args['pretrained'].split('/')[1]}_ep_{args['pretrained'].split('/')[2].split('.')[0][-4:]}"
+
+    writer = SummaryWriter(log_dir=f"classification_runs/{results_file}")
+    logging.basicConfig(filename=os.path.join(writer.log_dir, 'classification.log'), level=logging.DEBUG)
+    print(f"Logging has been saved at {writer.log_dir}.")
+    logging.info(f"Pretraining with the file {args['pretrained']}")
 
     for seed in seeds:
         print(f"Running with seed {seed}")
+        logging.info(f"Running with seed {seed}")
         seed_everything(seed)
 
         train_loaders, val_loader = dataprep(args)
@@ -134,7 +145,7 @@ def main(args):
         for i, train_loader in enumerate(train_loaders):
             output = {len(train_loader.dataset): {
                 "baseline": 0,
-                "finetuned": 0,
+                "pretrained": 0,
             }}
             for _ in range(2):
                 print(f"Training on {len(train_loader.dataset)} ECGs and validation on {len(val_loader.dataset)} ECGs.")
@@ -154,13 +165,18 @@ def main(args):
                     optimizer=optimizer,
                 )
 
-                output[len(train_loader.dataset)]["baseline" if baseline else "finetuned"] = best_auc_test
+                logging.info(f'For seed {seed}, with {len(train_loader.dataset)} ECGs, {"Baseline" if baseline else "PreTrained"} model  BEST_AUC: {best_auc_test}')
+
+                output[len(train_loader.dataset)]["baseline" if baseline else "pretrained"] = best_auc_test
 
                 baseline = not baseline
+            
+            
             results[seed].append(output)
             
-    
-    with open('results.json', 'w') as file:
+            
+    print(results)
+    with open(f'results/{results_file}.json', 'w') as file:
         json.dump(results, file, indent=4)
 
 
