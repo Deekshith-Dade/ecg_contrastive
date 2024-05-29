@@ -38,7 +38,7 @@ def seed_everything(seed=42):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-def dataprep(args):
+def dataprepLVEF(args):
     dataDir = '/usr/sci/cibc/Maprodxn/ClinicalECGData/LVEFCohort/pythonData/'
     normEcgs = True
 
@@ -139,7 +139,7 @@ def main(args):
         logging.info(f"Running with seed {seed}")
         seed_everything(seed)
 
-        train_loaders, val_loader = dataprep(args)
+        train_loaders, val_loader = dataprepLVEF(args)
 
         baseline = False
         for i, train_loader in enumerate(train_loaders):

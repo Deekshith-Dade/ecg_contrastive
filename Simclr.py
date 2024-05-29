@@ -37,19 +37,20 @@ class SimCLR(object):
         self.model = kwargs['model'].to(device)
         self.optimizer = kwargs['optimizer']
         self.scheduler = kwargs['scheduler']
-        self.lr = kwargs['lr']
-        self.batch_size = kwargs['batch_size']
-        self.lead_groupings = kwargs['lead_groupings']
-        self.pretrained = kwargs['pretrained']
-        self.curr_epochs = 0 if kwargs['epoch'] is None else kwargs['epoch']
+        self.curr_epochs = 0 if kwargs['currEpoch'] is None else kwargs['epoch']
+
+        self.lr = args.lr
+        self.batch_size = args.batch_size
+        self.lead_groupings = args.lead_groupings
+        self.pretrained = args.pretrained
+        self.epochs = args.epochs
+        
+        self.temperature = args.temperature
+        self.warmup_epochs = args.warmup_epochs
+        self.checkpoint_freq = args.checkpoint_freq
         
         self.n_views = 2
         self.fp16_precision = False
-        self.temperature = 0.1
-        self.epochs = 250
-        self.warmup_epochs = 50
-        self.checkpoint_freq = 10
-
 
         self.writer = SummaryWriter()
         logging.basicConfig(filename=os.path.join(self.writer.log_dir, 'training.log'), level=logging.DEBUG)
@@ -157,19 +158,22 @@ class SimCLR(object):
         acc1_meter = AverageMeter()
         acc5_meter = AverageMeter()
 
-        info = f"from epoch {self.curr_epochs}" if self.epochs > 0 else ""
+        info = f",from epoch {self.curr_epochs}" if self.epochs > 0 else ""
         info+= f" with pretrained model {self.pretrained}" if self.pretrained else ""
 
-        logging.info(f"Start SimCLR training for {self.epochs} epochs.{info}")
-        print(f"Start SimCLR training for {self.epochs} epochs.{info}")
+        logging.info(f"Start SimCLR training for {self.epochs} epochs {info}")
+        print(f"Start SimCLR training for {self.epochs} epochs {info}")
         logging.info(f"Training with initial learning rate lr={self.lr} and batch size={self.batch_size} and warmup epochs={self.warmup_epochs}.")
 
         for epoch_counter in range(self.curr_epochs+1, self.epochs):
             print(f"Epoch {epoch_counter}")
             for images, patientIds in tqdm(train_loader):
-                
-                images1 = images[0].to(device)
-                images2 = images[1].to(device)
+                if images[0].shape[-1] == 5000:
+                    images1 = torch.cat([images[0][:,:,2500:], images[0][:,:,:2500]], dim=1).to(device)
+                    images2 = torch.cat([images[1][:,:,2500:], images[1][:,:,:2500]], dim=1).to(device)
+                else:
+                    images1 = images[0].to(device)
+                    images2 = images[1].to(device)
 
                 with autocast(enabled=self.fp16_precision):
                     features1 = self.model(images1)
