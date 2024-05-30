@@ -42,3 +42,8 @@ SEED 44 1% Baseline lr=1e-3 epoch=150 BEST_AUC=0.8360245635777427
 SEED 42 10% Baseline lr=1e-3 epoch=50 BEST_AUC=0.8934136063050068
 SEED 43 10% Baseline lr=1e-3 epoch=50 BEST_AUC=0.8798876630229563
 SEED 44 10% Baseline lr=1e-3 epoch=50 BEST_AUC=0.8874246003698575
+
+
+BEST CHECKPOINTS
+"runs/May22_23-48-37_cibcgpu4/checkpoint_lead_groupings_0170.pth.tar"
+"runs/May21_23-00-04_cibcgpu4/checkpoint_0200.pth.tar"

@@ -1,12 +1,12 @@
+import argparse
 import random
 import logging
 
 import numpy as np
 import torch
-import pickle
-import DataTools
 import Networks
 import Training
+from data_utils import dataprepLVEF
 import os
 
 from torch.utils.tensorboard import SummaryWriter
@@ -21,6 +21,15 @@ args = dict(
     pretrained="runs/May24_16-51-42_cibcgpu3/checkpoint_lead_groupings_0100.pth.tar",
     batch_size=512,
 )
+
+parser = argparse.ArgumentParser(description='Classification for LVEF or KCL Tasks')
+parser.add_argument('--pretrained', default="runs/May27_23-23-43_cibcgpu3/checkpoint_0200.pth.tar", type=str, metavar="PATH", help='Path to pretrained model')
+parser.add_argument('--batch_size', default=512, type=int, metavar='N', help='Batch size for training')
+parser.add_argument('--epochs', default=[200, 180, 50, 30, 30], type=int, nargs="+", metavar='N', help='Number of epochs to train')
+parser.add_argument('--seeds', default=[42, 43, 44, 45, 46], type=int, nargs="+", metavar='N', help='Seeds for reproducibility')
+parser.add_argument('--finetuning_ratios', default=[0.01, 0.05, 0.1, 0.5, 1.0], type=float, nargs="+", metavar='N', help='Finetuning Ratios')
+parser.add_argument('--task', default="LVEF", type=str, metavar='N', help='Task to train on')
+
 
 def seed_everything(seed=42):
     # Seed Python's built-in random module
@@ -38,67 +47,17 @@ def seed_everything(seed=42):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-def dataprepLVEF(args):
-    dataDir = '/usr/sci/cibc/Maprodxn/ClinicalECGData/LVEFCohort/pythonData/'
-    normEcgs = True
 
-    print("Preparing Data For Finetuning")
-    with open('patient_splits/validation_patients.pkl', 'rb') as file:
-        validation_patients = pickle.load(file)
-    
-    with open('patient_splits/pre_train_patients.pkl', 'rb') as file:
-        pre_train_patients = pickle.load(file)
-    
-    num_classification_patients = len(pre_train_patients)
-    finetuning_ratios =  [0.01, 0.05, 0.1, 0.5, 1.0]
-    num_finetuning = [int(num_classification_patients * ratio) for ratio in finetuning_ratios]
-    print(f"Number of Finetuning Patients: {num_finetuning}")
-
-    patientInds = list(range(num_classification_patients))
-    random.shuffle(patientInds)
-
-    train_loaders = []
-    dataset_lengths = []
-    for i in num_finetuning:
-        finetuning_patient_indices = patientInds[:i]
-        finetuning_patients = pre_train_patients[finetuning_patient_indices]
-
-        dataset = DataTools.PatientECGDatasetLoader(baseDir=dataDir, patients=finetuning_patients.tolist(), normalize=normEcgs)
-
-        loader = torch.utils.data.DataLoader(
-            dataset,
-            batch_size=args["batch_size"],
-            num_workers=32,
-            shuffle=True,
-            pin_memory=True,
-        )
-
-        train_loaders.append(loader)
-        dataset_lengths.append(len(dataset))
-    
-    validation_dataset = DataTools.PatientECGDatasetLoader(baseDir=dataDir, patients=validation_patients.tolist(), normalize=normEcgs)
-    val_loader = torch.utils.data.DataLoader(
-        validation_dataset,
-        batch_size=args["batch_size"],
-        num_workers=32,
-        shuffle=False,
-        pin_memory=True,
-    )
-
-    print(f"Preparing Finetuning with {dataset_lengths} number of ECGs and validation with {len(validation_dataset)} number of ECGs")
-
-    return train_loaders, val_loader
-
-def create_model(args, baseline):
+def create_model(args, baseline, finetune=False):
     print("=> Creating Model")
-    model = Networks.BaselineConvNet(classification=True, avg_embeddings=False)
+    model = Networks.BaselineConvNet(classification=True, avg_embeddings=True)
 
     if baseline:
         print(f"Returning Baseline Model")
         return model
 
-    if args["pretrained"] is not None:
-        checkpoint = torch.load(args["pretrained"], map_location="cpu")
+    if args.pretrained is not None:
+        checkpoint = torch.load(args.pretrained, map_location="cpu")
         state_dict = checkpoint['state_dict']
 
         for k in list(state_dict.keys()):
@@ -113,9 +72,9 @@ def create_model(args, baseline):
         
         for name, param in model.named_parameters():
             if not name.startswith("finalLayer"):
-                param.requires_grad = False
+                param.requires_grad = finetune
         
-        print(f"Pre-Trained Model Loaded from {args['pretrained']}")
+        print(f"Pre-Trained Model Loaded from {args.pretrained}")
         
     else:
         print("No Pretrained Model Found")
@@ -123,16 +82,19 @@ def create_model(args, baseline):
     return model
 
 
-def main(args):
-    seeds =  [42, 43, 44, 45, 46]
+def main():
+    args = parser.parse_args()
+    seeds =  args.seeds
+    epochs = args.epochs
+
     results = {seed: [] for seed in seeds}
-    epochs = [250, 250, 50, 30, 30]
-    results_file = f"results_{args['pretrained'].split('/')[1]}_ep_{args['pretrained'].split('/')[2].split('.')[0][-4:]}"
+
+    results_file = f"results_{args.pretrained.split('/')[1]}_ep_{args.pretrained.split('/')[2].split('.')[0][-4:]}"
 
     writer = SummaryWriter(log_dir=f"classification_runs/{results_file}")
     logging.basicConfig(filename=os.path.join(writer.log_dir, 'classification.log'), level=logging.DEBUG)
     print(f"Logging has been saved at {writer.log_dir}.")
-    logging.info(f"Pretraining with the file {args['pretrained']}")
+    logging.info(f"Pretraining with the file {args.pretrained}")
 
     for seed in seeds:
         print(f"Running with seed {seed}")
@@ -141,21 +103,41 @@ def main(args):
 
         train_loaders, val_loader = dataprepLVEF(args)
 
-        baseline = False
+        
         for i, train_loader in enumerate(train_loaders):
             output = {len(train_loader.dataset): {
-                "baseline": 0,
-                "pretrained": 0,
+                "Baseline": 0,
+                "PreTrained/Frozen": 0,
+                "PreTrained/Finetuned": 0
             }}
-            for _ in range(2):
+
+            for x in [0,1,2]:
                 print(f"Training on {len(train_loader.dataset)} ECGs and validation on {len(val_loader.dataset)} ECGs.")
-                model = create_model(args, baseline=baseline)
-                print(model.conv1.weight.requires_grad)
+                if x == 0:
+                    model = create_model(args, baseline=True)
+                    lr = 1e-3
+                    key = f"Baseline"
+                    print(f"Training Baseline Model")
+                elif x == 1:
+                    model = create_model(args, baseline=False, finetune=False)
+                    lr = 0.2
+                    key = f"PreTrained/Frozen"
+                    print(f"Training Pretrained Model with Frozen Parameters")
+                elif x == 2:
+                    model = create_model(args, baseline=False, finetune=True)
+                    fast_lr = 0.2
+                    slow_lr = 5e-5
+                    key = f"PreTrained/Finetuned"
+                    print(f"Training Pretrained Model with Finetuning")
+                
+                print(f"Requires Grad = {model.conv1.weight.requires_grad}")
                 model.to(device)
-                lr = 1e-3 if baseline else 0.2
                 numEpoch = epochs[i]
 
                 optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+                if x == 2:
+                    params = [{'params':getattr(model,i).parameters(), 'lr': slow_lr} if i.find("finalLayer")==-1 else {'params':getattr(model,i).parameters(), 'lr': fast_lr} for i,x in model.named_children()]
+                    optimizer = torch.optim.Adam(params)
 
                 best_auc_test = Training.train(
                     model=model,
@@ -165,12 +147,10 @@ def main(args):
                     optimizer=optimizer,
                 )
 
-                logging.info(f'For seed {seed}, with {len(train_loader.dataset)} ECGs, {"Baseline" if baseline else "PreTrained"} model  BEST_AUC: {best_auc_test}')
+                logging.info(f'For seed {seed}, with {len(train_loader.dataset)} ECGs, {key} model  BEST_AUC: {best_auc_test}')
 
-                output[len(train_loader.dataset)]["baseline" if baseline else "pretrained"] = best_auc_test
+                output[len(train_loader.dataset)][key] = best_auc_test
 
-                baseline = not baseline
-            
             
             results[seed].append(output)
             
@@ -182,6 +162,6 @@ def main(args):
 
 if __name__ == '__main__':
     now = time.time()
-    main(args)
+    main()
     print(f"Total Time: {time.time() - now} seconds")
     

@@ -9,3 +9,4 @@
 /classification_runs
 /results
 /*.json
+/kcl_patient_splits

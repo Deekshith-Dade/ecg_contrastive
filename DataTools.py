@@ -3,7 +3,11 @@ import numpy as np
 import torch as tch
 import os
 import json
+import torch.nn.functional as F
 
+
+class DataLoaderError(Exception):
+    pass
 
 
 class PreTrainECGDatasetLoader(Dataset):
@@ -405,3 +409,62 @@ class ECG_Sex_DatasetLoader(Dataset):
     
     def __len__(self):
         return len(self.fileList)
+
+class ECG_KCL_Datasetloader(Dataset):
+	def __init__(self,baseDir='',ecgs=[],kclVals=[],normalize =True, 
+				 normMethod='0to1',rhythmType='Rhythm',allowMismatchTime=True,
+				 mismatchFix='Pad',randomCrop=False,cropSize=2500,expectedTime=5000):
+		self.baseDir = baseDir
+		self.rhythmType = rhythmType
+		self.normalize = normalize
+		self.normMethod = normMethod
+		self.ecgs = ecgs
+		self.kclVals = kclVals
+		self.expectedTime = expectedTime
+		self.allowMismatchTime = allowMismatchTime
+		self.mismatchFix = mismatchFix
+		self.randomCrop = randomCrop
+		self.cropSize = cropSize
+		if self.randomCrop:
+			self.expectedTime = self.cropSize
+
+	def __getitem__(self,item):
+		ecgName = self.ecgs[item].replace('.xml',f'_{self.rhythmType}.npy')
+		ecgPath = os.path.join(self.baseDir,ecgName)
+		ecgData = np.load(ecgPath)
+
+		kclVal = tch.tensor(self.kclVals[item])
+		ecgs = tch.tensor(ecgData).float() #unsqueeze it to give it one channel\
+
+		if self.randomCrop:
+			startIx = 0
+			if ecgs.shape[-1]-self.cropSize > 0:
+				startIx = tch.randint(ecgs.shape[-1]-self.cropSize,(1,))
+			ecgs = ecgs[...,startIx:startIx+self.cropSize]
+
+		if ecgs.shape[-1] != self.expectedTime:
+			if self.allowMismatchTime:
+				if self.mismatchFix == 'Pad':
+					ecgs=F.pad(ecgs,(0,self.expectedTime-ecgs.shape[-1]))
+				if self.mismatchFix == 'Repeat':
+					timeDiff = self.expectedTime - ecgs.shape[-1]
+					ecgs=tch.cat((ecgs,ecgs[...,0:timeDiff]))
+
+			else:
+				raise DataLoaderError('You are not allowed to have mismatching data lengths.')
+
+		if self.normalize:
+			if self.normMethod == '0to1':
+				if not tch.allclose(ecgs,tch.zeros_like(ecgs)):
+					ecgs = ecgs - tch.min(ecgs)
+					ecgs = ecgs / tch.max(ecgs)
+				else:
+					print(f'All zero data for item {item}, {ecgPath}')
+			
+		if tch.any(tch.isnan(ecgs)):
+			print(f'Nans in the data for item {item}, {ecgPath}')
+			raise DataLoaderError('Nans in data')
+		return ecgs, kclVal
+
+	def __len__(self):
+		return len(self.ecgs)
