@@ -5,7 +5,7 @@ from sklearn import metrics
 import matplotlib.pyplot as plt
 
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 bce_loss = nn.BCELoss()
 
 def loss_bce_lvef(predictedVal, clinicalParam):
@@ -159,7 +159,7 @@ def evaluate_balanced(network,dataLoaders,lossFun,lossParams,leads,lookForFig=Fa
 def trainNetwork_balancedClassification(network, trainDataLoader_normals, trainDataLoader_abnormals, testDataLoader, numEpoch, optimizer, lossFun, lossParams, label, logToWandB, leads):
     print(f"Beginning Training for Network {network.__class__.__name__}")
     prevTrainingLoss = 0.0
-    bestEvalMetric = 0.5
+    bestEvalMetric_test = 0.5
     maxBatches = max(len(trainDataLoader_normals), len(trainDataLoader_abnormals))
 
     for ep in range(numEpoch):
@@ -243,6 +243,9 @@ def trainNetwork_balancedClassification(network, trainDataLoader_normals, trainD
 		
         evalMetric_train = metrics.roc_auc_score(allParams_train, allPredictions_train)
         evalMetric_test = metrics.roc_auc_score(allParams_test, allPredictions_test)
+
+        if evalMetric_test > bestEvalMetric_test:
+             bestEvalMetric_test = evalMetric_test
         
         
         precision, recall, thresholds = metrics.precision_recall_curve(allParams_test, allPredictions_test)
@@ -266,6 +269,9 @@ def trainNetwork_balancedClassification(network, trainDataLoader_normals, trainD
         
         print(f'Weighted Acc at 50% cutoff: {acc_train:.4f} train {acc_test:.4f} test')
         print(f'train score: {evalMetric_train:0.3f} test score: {evalMetric_test:0.3f}')
+
+    print(f"Best AUC Test: {bestEvalMetric_test}")
+    return bestEvalMetric_test
 
 
 

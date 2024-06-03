@@ -1,6 +1,6 @@
 from torch.utils.data import Dataset
 import numpy as np
-import torch as tch
+import torch 
 import os
 import json
 import torch.nn.functional as F
@@ -8,6 +8,66 @@ import torch.nn.functional as F
 
 class DataLoaderError(Exception):
     pass
+
+
+class PreTrain_1M_Datasetloader(Dataset):
+	def __init__(self,baseDir='',ecgs=[],patientIds=[],augs=None, normalize =False, 
+				 normMethod='0to1',rhythmType='Rhythm',allowMismatchTime=False,
+				 mismatchFix='Pad',randomCrop=True,cropSize=2500,expectedTime=5000):
+		self.baseDir = baseDir
+		self.rhythmType = rhythmType
+		self.normalize = normalize
+		self.normMethod = normMethod
+		self.augs = augs
+		self.ecgs = ecgs
+		self.patientIds = patientIds
+		self.expectedTime = expectedTime
+		self.allowMismatchTime = allowMismatchTime
+		self.mismatchFix = mismatchFix
+		self.randomCrop = randomCrop
+		self.cropSize = cropSize
+		if self.randomCrop:
+			self.expectedTime = self.cropSize
+
+	def __getitem__(self,item):
+		ecgName = self.ecgs[item].replace('.xml',f'_{self.rhythmType}.npy')
+		ecgPath = os.path.join(self.baseDir,ecgName)
+		ecgData = np.load(ecgPath)
+
+		ecgs = torch.tensor(ecgData).float() #unsqueeze it to give it one channel\
+
+		if self.randomCrop:
+			startIx = 0
+			if ecgs.shape[-1]-self.cropSize > 0:
+				startIx = torch.randint(ecgs.shape[-1]-self.cropSize,(1,))
+			ecgs = ecgs[...,startIx:startIx+self.cropSize]
+
+		if ecgs.shape[-1] != self.expectedTime:
+			if self.allowMismatchTime:
+				if self.mismatchFix == 'Pad':
+					ecgs=F.pad(ecgs,(0,self.expectedTime-ecgs.shape[-1]))
+				if self.mismatchFix == 'Repeat':
+					timeDiff = self.expectedTime - ecgs.shape[-1]
+					ecgs=torch.cat((ecgs,ecgs[...,0:timeDiff]))
+
+			else:
+				raise DataLoaderError('You are not allowed to have mismatching data lengths.')
+
+		if self.normalize:
+			if self.normMethod == '0to1':
+				if not torch.allclose(ecgs,torch.zeros_like(ecgs)):
+					ecgs = ecgs - torch.min(ecgs)
+					ecgs = ecgs / torch.max(ecgs)
+				else:
+					print(f'All zero data for item {item}, {ecgPath}')
+			
+		if torch.any(torch.isnan(ecgs)):
+			print(f'Nans in the data for item {item}, {ecgPath}')
+			raise DataLoaderError('Nans in data')
+		return self.augs(ecgs), str(self.patientIds[item])
+
+	def __len__(self):
+		return len(self.ecgs)
 
 
 class PreTrainECGDatasetLoader(Dataset):
@@ -60,7 +120,7 @@ class PreTrainECGDatasetLoader(Dataset):
         
         # patientInfoPath = os.path.join(self.baseDir, patient, 'patientData.json')
         # patientInfo = json.load(open(patientInfoPath))
-        # ejectionFraction = tch.tensor(patientInfo['ejectionFraction'])
+        # ejectionFraction = torch.tensor(patientInfo['ejectionFraction'])
 
         ecgPath = os.path.join(self.baseDir,
                                self.fileList[item])
@@ -73,25 +133,25 @@ class PreTrainECGDatasetLoader(Dataset):
         else:
             ecgData = ecgData[:, 2500:]
 
-        ecgs = tch.tensor(ecgData).float()
+        ecgs = torch.tensor(ecgData).float()
         if self.normalize:
             if self.normMethod == '0to1':
-                if not tch.allclose(ecgs, tch.zeros_like(ecgs)):
-                    ecgs = ecgs - tch.min(ecgs)
-                    ecgs = ecgs / tch.max(ecgs)
+                if not torch.allclose(ecgs, torch.zeros_like(ecgs)):
+                    ecgs = ecgs - torch.min(ecgs)
+                    ecgs = ecgs / torch.max(ecgs)
                 else:
                     print(f'All zero data for item {item}, {ecgPath}')
             elif self.normMethod == 'unitrange':
-                if not tch.allclose(ecgs, tch.zeros_like(ecgs)):
+                if not torch.allclose(ecgs, torch.zeros_like(ecgs)):
                     for lead in range(ecgs.shape[0]):
                         frame = ecgs[lead]
-                        frame = (frame - tch.min(frame)) / (tch.max(frame) - tch.min(frame) + 1e-8)
+                        frame = (frame - torch.min(frame)) / (torch.max(frame) - torch.min(frame) + 1e-8)
                         frame = frame - 0.5
                         ecgs[lead,:] = frame.unsqueeze(0)
                 else:
                     print(f'All zero data for item {item}, {ecgPath}')
         
-        if tch.any(tch.isnan(ecgs)):
+        if torch.any(torch.isnan(ecgs)):
             print(f"NANs in the data for item {item}, {ecgPath}")
             
         
@@ -147,7 +207,7 @@ class PreTrainECGDatasetLoaderV2(Dataset):
 
         # patientInfoPath = os.path.join(self.baseDir, patient, 'patientData.json')
         # patientInfo = json.load(open(patientInfoPath))
-        # ejectionFraction = tch.tensor(patientInfo['ejectionFraction'])
+        # ejectionFraction = torch.tensor(patientInfo['ejectionFraction'])
 
         ecgPath = os.path.join(self.baseDir,
                                self.fileList[item])
@@ -155,25 +215,25 @@ class PreTrainECGDatasetLoaderV2(Dataset):
 
         ecgData = np.load(ecgPath)
 
-        ecgs = tch.tensor(ecgData).float()
+        ecgs = torch.tensor(ecgData).float()
         if self.normalize:
             if self.normMethod == '0to1':
-                if not tch.allclose(ecgs, tch.zeros_like(ecgs)):
-                    ecgs = ecgs - tch.min(ecgs)
-                    ecgs = ecgs / tch.max(ecgs)
+                if not torch.allclose(ecgs, torch.zeros_like(ecgs)):
+                    ecgs = ecgs - torch.min(ecgs)
+                    ecgs = ecgs / torch.max(ecgs)
                 else:
                     print(f'All zero data for item {item}, {ecgPath}')
             elif self.normMethod == 'unitrange':
-                if not tch.allclose(ecgs, tch.zeros_like(ecgs)):
+                if not torch.allclose(ecgs, torch.zeros_like(ecgs)):
                     for lead in range(ecgs.shape[0]):
                         frame = ecgs[lead]
-                        frame = (frame - tch.min(frame)) / (tch.max(frame) - tch.min(frame) + 1e-8)
+                        frame = (frame - torch.min(frame)) / (torch.max(frame) - torch.min(frame) + 1e-8)
                         frame = frame - 0.5
                         ecgs[lead,:] = frame.unsqueeze(0)
                 else:
                     print(f'All zero data for item {item}, {ecgPath}')
         
-        if tch.any(tch.isnan(ecgs)):
+        if torch.any(torch.isnan(ecgs)):
             print(f"NANs in the data for item {item}, {ecgPath}")
             
         
@@ -247,27 +307,27 @@ class PatientECGDatasetLoader(Dataset):
         else:
             ecgData = ecgData[:, 2500:]
 
-        ejectionFraction = tch.tensor(patientInfo['ejectionFraction'])
-        ecgs = tch.tensor(ecgData).float()
+        ejectionFraction = torch.tensor(patientInfo['ejectionFraction'])
+        ecgs = torch.tensor(ecgData).float()
 
         if self.normalize:
             if self.normMethod == '0to1':
-                if not tch.allclose(ecgs, tch.zeros_like(ecgs)):
-                    ecgs = ecgs - tch.min(ecgs)
-                    ecgs = ecgs / tch.max(ecgs)
+                if not torch.allclose(ecgs, torch.zeros_like(ecgs)):
+                    ecgs = ecgs - torch.min(ecgs)
+                    ecgs = ecgs / torch.max(ecgs)
                 else:
                     print(f'All zero data for item {item}, {ecgPath}')
             elif self.normMethod == 'unitrange':
-                if not tch.allclose(ecgs, tch.zeros_like(ecgs)):
+                if not torch.allclose(ecgs, torch.zeros_like(ecgs)):
                     for lead in range(ecgs.shape[0]):
                         frame = ecgs[lead]
-                        frame = (frame - tch.min(frame)) / (tch.max(frame) - tch.min(frame) + 1e-8)
+                        frame = (frame - torch.min(frame)) / (torch.max(frame) - torch.min(frame) + 1e-8)
                         frame = frame - 0.5
                         ecgs[lead,:] = frame.unsqueeze(0)
                 else:
                     print(f'All zero data for item {item}, {ecgPath}')
         
-        if tch.any(tch.isnan(ecgs)):
+        if torch.any(torch.isnan(ecgs)):
             print(f"NANs in the data for item {item}, {ecgPath}")
             
         
@@ -325,18 +385,18 @@ class ECGDatasetLoader(Dataset):
         
         ecgData = np.load(ecgPath)
 
-        ejectionFraction = tch.tensor(patientInfo['ejectionFraction'])
-        ecgs = tch.tensor(ecgData).float().unsqueeze(0)
+        ejectionFraction = torch.tensor(patientInfo['ejectionFraction'])
+        ecgs = torch.tensor(ecgData).float().unsqueeze(0)
 
         if self.normalize:
             if self.normMethod == '0to1':
-                if not tch.allclose(ecgs, tch.zeros_like(ecgs)):
-                    ecgs = ecgs - tch.min(ecgs)
-                    ecgs = ecgs / tch.max(ecgs)
+                if not torch.allclose(ecgs, torch.zeros_like(ecgs)):
+                    ecgs = ecgs - torch.min(ecgs)
+                    ecgs = ecgs / torch.max(ecgs)
                 else:
                     print(f'All zero data for item {item}, {ecgPath}')
         
-        if tch.any(tch.isnan(ecgs)):
+        if torch.any(torch.isnan(ecgs)):
             print(f"NANs in the data for item {item}, {ecgPath}")
             
         
@@ -390,18 +450,18 @@ class ECG_Sex_DatasetLoader(Dataset):
         ecgData = np.load(ecgPath)
         label = self.patientLookup[item][1]
         gender = 0 if label == "Female" else 1
-        gender = tch.tensor(gender).float()
-        ecgs = tch.tensor(ecgData).float().unsqueeze(0)
+        gender = torch.tensor(gender).float()
+        ecgs = torch.tensor(ecgData).float().unsqueeze(0)
 
         if self.normalize:
             if self.normMethod == '0to1':
-                if not tch.allclose(ecgs, tch.zeros_like(ecgs)):
-                    ecgs = ecgs - tch.min(ecgs)
-                    ecgs = ecgs / tch.max(ecgs)
+                if not torch.allclose(ecgs, torch.zeros_like(ecgs)):
+                    ecgs = ecgs - torch.min(ecgs)
+                    ecgs = ecgs / torch.max(ecgs)
                 else:
                     print(f'All zero data for item {item}, {ecgPath}')
         
-        if tch.any(tch.isnan(ecgs)):
+        if torch.any(torch.isnan(ecgs)):
             print(f"NANs in the data for item {item}, {ecgPath}")
             
         
@@ -433,13 +493,13 @@ class ECG_KCL_Datasetloader(Dataset):
 		ecgPath = os.path.join(self.baseDir,ecgName)
 		ecgData = np.load(ecgPath)
 
-		kclVal = tch.tensor(self.kclVals[item])
-		ecgs = tch.tensor(ecgData).float() #unsqueeze it to give it one channel\
+		kclVal = torch.tensor(self.kclVals[item])
+		ecgs = torch.tensor(ecgData).float() #unsqueeze it to give it one channel\
 
 		if self.randomCrop:
 			startIx = 0
 			if ecgs.shape[-1]-self.cropSize > 0:
-				startIx = tch.randint(ecgs.shape[-1]-self.cropSize,(1,))
+				startIx = torch.randint(ecgs.shape[-1]-self.cropSize,(1,))
 			ecgs = ecgs[...,startIx:startIx+self.cropSize]
 
 		if ecgs.shape[-1] != self.expectedTime:
@@ -448,20 +508,20 @@ class ECG_KCL_Datasetloader(Dataset):
 					ecgs=F.pad(ecgs,(0,self.expectedTime-ecgs.shape[-1]))
 				if self.mismatchFix == 'Repeat':
 					timeDiff = self.expectedTime - ecgs.shape[-1]
-					ecgs=tch.cat((ecgs,ecgs[...,0:timeDiff]))
+					ecgs=torch.cat((ecgs,ecgs[...,0:timeDiff]))
 
 			else:
 				raise DataLoaderError('You are not allowed to have mismatching data lengths.')
 
 		if self.normalize:
 			if self.normMethod == '0to1':
-				if not tch.allclose(ecgs,tch.zeros_like(ecgs)):
-					ecgs = ecgs - tch.min(ecgs)
-					ecgs = ecgs / tch.max(ecgs)
+				if not torch.allclose(ecgs,torch.zeros_like(ecgs)):
+					ecgs = ecgs - torch.min(ecgs)
+					ecgs = ecgs / torch.max(ecgs)
 				else:
 					print(f'All zero data for item {item}, {ecgPath}')
 			
-		if tch.any(tch.isnan(ecgs)):
+		if torch.any(torch.isnan(ecgs)):
 			print(f'Nans in the data for item {item}, {ecgPath}')
 			raise DataLoaderError('Nans in data')
 		return ecgs, kclVal

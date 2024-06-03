@@ -6,30 +6,31 @@ import numpy as np
 import torch
 import Networks
 import Training
-from data_utils import dataprepLVEF
+from data_utils import dataprepLVEF, dataprepKCL
 import os
 
 from torch.utils.tensorboard import SummaryWriter
-
+import parameters
 import json
 import time
 
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+gpuIds = range(torch.cuda.device_count())
 
-args = dict(
-    pretrained="runs/May24_16-51-42_cibcgpu3/checkpoint_lead_groupings_0100.pth.tar",
-    batch_size=512,
-)
+
 
 parser = argparse.ArgumentParser(description='Classification for LVEF or KCL Tasks')
-parser.add_argument('--pretrained', default="runs/May27_23-23-43_cibcgpu3/checkpoint_0200.pth.tar", type=str, metavar="PATH", help='Path to pretrained model')
+parser.add_argument('--pretrained', default="runs/May31_11-53-58_cibcgpu4_ECG_SpatioTemporalNet1D/checkpoint_0070.pth.tar", type=str, metavar="PATH", help='Path to pretrained model')
 parser.add_argument('--batch_size', default=512, type=int, metavar='N', help='Batch size for training')
-parser.add_argument('--epochs', default=[200, 180, 50, 30, 30], type=int, nargs="+", metavar='N', help='Number of epochs to train')
+parser.add_argument('--epochs', default=[70, 50, 30, 20, 20], type=int, nargs="+", metavar='N', help='Number of epochs to train')
 parser.add_argument('--seeds', default=[42, 43, 44, 45, 46], type=int, nargs="+", metavar='N', help='Seeds for reproducibility')
-parser.add_argument('--finetuning_ratios', default=[0.01, 0.05, 0.1, 0.5, 1.0], type=float, nargs="+", metavar='N', help='Finetuning Ratios')
-parser.add_argument('--task', default="LVEF", type=str, metavar='N', help='Task to train on')
-
+parser.add_argument('--finetuning_ratios', default=[0.01], type=float, nargs="+", metavar='N', help='Finetuning Ratios')
+parser.add_argument('--task', default="LVEF", choices=["LVEF", "KCL"], type=str, metavar='N', help='Task to train on')
+parser.add_argument('--num_workers', default=32, type=int, metavar='N', help='Number of workers for data loading')
+parser.add_argument('--lr', default=[1e-3, 0.1, 1e-4], type=float, nargs="+", metavar='N', help='Learning Rate as [lr, fast_lr, slow_lr]')
+parser.add_argument('--arch', default='ECG_SpatioTemporalNet1D', choices=["ECG_SpatioTemporalNet1D", "BaselineConvNet"], type=str, metavar='ARCH', help='Architecture to use')
+#, 0.05, 0.1, 0.5, 1.0
 
 def seed_everything(seed=42):
     # Seed Python's built-in random module
@@ -45,12 +46,16 @@ def seed_everything(seed=42):
 
     # For CPU operations (reproducibility)
     torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.benchmark = True
 
 
 def create_model(args, baseline, finetune=False):
     print("=> Creating Model")
-    model = Networks.BaselineConvNet(classification=True, avg_embeddings=True)
+    if args.arch == "BaselineConvNet":
+        model = Networks.BaselineConvNet(classification=True, avg_embeddings=True)
+    elif args.arch =="ECG_SpatioTemporalNet1D":
+        model = Networks.ECG_SpatioTemporalNet1D(**parameters.spatioTemporalParams_1D, classification=True, avg_embeddings=True)
+
 
     if baseline:
         print(f"Returning Baseline Model")
@@ -89,48 +94,58 @@ def main():
 
     results = {seed: [] for seed in seeds}
 
-    results_file = f"results_{args.pretrained.split('/')[1]}_ep_{args.pretrained.split('/')[2].split('.')[0][-4:]}"
+    results_file = f"results_{args.task}_{args.pretrained.split('/')[1]}_ep_{args.pretrained.split('/')[2].split('.')[0][-4:]}"
 
     writer = SummaryWriter(log_dir=f"classification_runs/{results_file}")
     logging.basicConfig(filename=os.path.join(writer.log_dir, 'classification.log'), level=logging.DEBUG)
     print(f"Logging has been saved at {writer.log_dir}.")
-    logging.info(f"Pretraining with the file {args.pretrained}")
+    logging.info(f"Pretraining with the file {args.pretrained} on {args.task} task with model {args.arch}.")
+    logging.info(f"args: {args}")
 
     for seed in seeds:
         print(f"Running with seed {seed}")
         logging.info(f"Running with seed {seed}")
         seed_everything(seed)
 
-        train_loaders, val_loader = dataprepLVEF(args)
+        train_loaders, val_loader = dataprepLVEF(args) if args.task == "LVEF" else dataprepKCL(args)
 
         
         for i, train_loader in enumerate(train_loaders):
-            output = {len(train_loader.dataset): {
+            if args.task == "LVEF":
+                training_size = len(train_loader.dataset)
+            elif args.task == "KCL":
+                training_size = f"{len(train_loader[0].dataset)} + {len(train_loader[1].dataset)}"
+            else:
+                raise ValueError("Task not recognized")
+            
+            output = {training_size: {
                 "Baseline": 0,
                 "PreTrained/Frozen": 0,
                 "PreTrained/Finetuned": 0
             }}
 
             for x in [0,1,2]:
-                print(f"Training on {len(train_loader.dataset)} ECGs and validation on {len(val_loader.dataset)} ECGs.")
+                print(f"Training on {training_size} ECGs and validation on {len(val_loader.dataset)} ECGs.")
                 if x == 0:
                     model = create_model(args, baseline=True)
-                    lr = 1e-3
+                    lr = args.lr[0]
                     key = f"Baseline"
                     print(f"Training Baseline Model")
+                    
                 elif x == 1:
                     model = create_model(args, baseline=False, finetune=False)
-                    lr = 0.2
+                    lr = args.lr[1]
                     key = f"PreTrained/Frozen"
                     print(f"Training Pretrained Model with Frozen Parameters")
                 elif x == 2:
                     model = create_model(args, baseline=False, finetune=True)
-                    fast_lr = 0.2
-                    slow_lr = 5e-5
+                    fast_lr = args.lr[1]
+                    slow_lr = args.lr[2]
                     key = f"PreTrained/Finetuned"
                     print(f"Training Pretrained Model with Finetuning")
                 
-                print(f"Requires Grad = {model.conv1.weight.requires_grad}")
+                print(f"Requires Grad = {model.mconv1.weight.requires_grad if args.arch == 'BaselineConvNet' else model.firstLayer[0].weight.requires_grad}")
+                model = torch.nn.DataParallel(model, device_ids=gpuIds)
                 model.to(device)
                 numEpoch = epochs[i]
 
@@ -139,17 +154,37 @@ def main():
                     params = [{'params':getattr(model,i).parameters(), 'lr': slow_lr} if i.find("finalLayer")==-1 else {'params':getattr(model,i).parameters(), 'lr': fast_lr} for i,x in model.named_children()]
                     optimizer = torch.optim.Adam(params)
 
-                best_auc_test = Training.train(
-                    model=model,
-                    trainDataLoader=train_loader,
-                    testDataLoader=val_loader,
-                    numEpoch=numEpoch,
-                    optimizer=optimizer,
-                )
+                if args.task == "LVEF":
+                    print(f"Training on LVEF Task")
+                    best_auc_test = Training.train(
+                        model=model,
+                        trainDataLoader=train_loader,
+                        testDataLoader=val_loader,
+                        numEpoch=numEpoch,
+                        optimizer=optimizer,
+                    )
+                elif args.task == "KCL":
+                    print(f"Training on KCL Task")
+                    lossParams = dict(highThresh = 5, lowThresh=4 ,type = 'binary cross entropy')
+                    lossFun = Training.loss_bce_kcl
+                    best_auc_test = Training.trainNetwork_balancedClassification(
+                        network=model,
+                        trainDataLoader_normals=train_loader[0],
+                        trainDataLoader_abnormals=train_loader[1],
+                        testDataLoader=val_loader,
+                        numEpoch=numEpoch,
+                        optimizer=optimizer,
+                        lossFun=lossFun,
+                        lossParams=lossParams,
+                        label="KCL",
+                        leads=[0,1,2,3,4,5,6,7],
+                        logToWandB=False
+                    )
 
-                logging.info(f'For seed {seed}, with {len(train_loader.dataset)} ECGs, {key} model  BEST_AUC: {best_auc_test}')
 
-                output[len(train_loader.dataset)][key] = best_auc_test
+                logging.info(f'For seed {seed}, with {training_size}\tECGs, {key}\tmodel  BEST_AUC: {best_auc_test}')
+
+                output[training_size][key] = best_auc_test
 
             
             results[seed].append(output)

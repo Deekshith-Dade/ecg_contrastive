@@ -33,12 +33,12 @@ class AverageMeter:
 
 class SimCLR(object):
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, args, **kwargs):
         self.model = kwargs['model'].to(device)
         self.optimizer = kwargs['optimizer']
         self.scheduler = kwargs['scheduler']
         self.curr_epochs = 0 if kwargs['currEpoch'] is None else kwargs['epoch']
-
+        self.args = args
         self.lr = args.lr
         self.batch_size = args.batch_size
         self.lead_groupings = args.lead_groupings
@@ -52,8 +52,10 @@ class SimCLR(object):
         self.n_views = 2
         self.fp16_precision = False
 
-        self.writer = SummaryWriter()
+        self.writer = SummaryWriter(comment=f"_{args.arch}")
         logging.basicConfig(filename=os.path.join(self.writer.log_dir, 'training.log'), level=logging.DEBUG)
+
+        logging.info(f"args {args}")
         print(f"Logging has been saved at {self.writer.log_dir}.")
         self.criterion = torch.nn.CrossEntropyLoss().to(device)
 
@@ -160,6 +162,7 @@ class SimCLR(object):
 
         info = f",from epoch {self.curr_epochs}" if self.epochs > 0 else ""
         info+= f" with pretrained model {self.pretrained}" if self.pretrained else ""
+        info+= f" with model {self.model.module.__class__.__name__}"
 
         logging.info(f"Start SimCLR training for {self.epochs} epochs {info}")
         print(f"Start SimCLR training for {self.epochs} epochs {info}")
@@ -210,7 +213,7 @@ class SimCLR(object):
                 checkpoint_name = f"checkpoint{'_lead_groupings' if self.lead_groupings else ''}_{epoch_counter:04d}.pth.tar"
                 save_checkpoint({
                     'epoch': epoch_counter,
-                    # 'arch': self.args.arch,
+                    'arch': self.args.arch,
                     'state_dict': self.model.state_dict(),
                     'optimizer': self.optimizer.state_dict(),
                 }, is_best=False, filename=os.path.join(self.writer.log_dir, checkpoint_name))

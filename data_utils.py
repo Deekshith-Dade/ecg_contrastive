@@ -89,7 +89,7 @@ def dataprepLVEF(args):
         loader = torch.utils.data.DataLoader(
             dataset,
             batch_size=args.batch_size,
-            num_workers=32,
+            num_workers=args.num_workers,
             shuffle=True,
             pin_memory=True,
         )
@@ -101,7 +101,7 @@ def dataprepLVEF(args):
     val_loader = torch.utils.data.DataLoader(
         validation_dataset,
         batch_size=args.batch_size,
-        num_workers=32,
+        num_workers=args.num_workers,
         shuffle=False,
         pin_memory=True,
     )
