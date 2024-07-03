@@ -19,7 +19,7 @@ def dataprepKCL(args):
     trainECGs_normal_count = len(trainECGs_normal)
     trainECGs_abnormal_count = len(trainECGs_abnormal)
 
-    finetuning_ratios = [0.01, 0.05, 0.1, 0.5, 1.0]
+    finetuning_ratios = args.finetuning_ratios
     num_finetuning = [[int(trainECGs_normal_count * ratio), int(trainECGs_abnormal_count * ratio)] for ratio in finetuning_ratios]
 
     train_loaders = []

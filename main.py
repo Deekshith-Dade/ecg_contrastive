@@ -38,7 +38,7 @@ def seed_everything(seed=42):
     torch.cuda.manual_seed_all(seed) 
 
     torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = True
+    torch.backends.cudnn.benchmark = False
 
 def main():
 
@@ -111,7 +111,7 @@ def main():
     print(f"DataLoader creation time: {time.time() - start} seconds")
 
     model = Networks.BaselineConvNet(lead_grouping=lead_groupings) if args.arch == "BaselineConvNet" else Networks.ECG_SpatioTemporalNet1D(**parameters.spatioTemporalParams_1D)
-    optimizer = torch.optim.Adam(model.parameters(), lr)
+    optimizer = torch.optim.Adam(model.parameters(), lr, eps=1e-4)
 
     if args.pretrained is not None:
         if os.path.exists(args.pretrained):
@@ -134,6 +134,7 @@ def main():
             print(f"Pretrained model not found at {args.pretrained}. Training from scratch...")
             return
 
+    
     print(model.finalLayer)
     model = torch.nn.DataParallel(model, device_ids=gpuIds)
     model.to(device)
@@ -146,14 +147,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-    
-
-
-
-
-    
-
-
-
-
-

@@ -13,23 +13,24 @@ from torch.utils.tensorboard import SummaryWriter
 import parameters
 import json
 import time
+import wandb
 
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 gpuIds = range(torch.cuda.device_count())
-
-
+os.environ["WANDB_API_KEY"] = "e56acefffc20a7f826010f436f392b067f4e0ae5"
 
 parser = argparse.ArgumentParser(description='Classification for LVEF or KCL Tasks')
-parser.add_argument('--pretrained', default="runs/May31_11-53-58_cibcgpu4_ECG_SpatioTemporalNet1D/checkpoint_0070.pth.tar", type=str, metavar="PATH", help='Path to pretrained model')
+parser.add_argument('--pretrained', default="runs/Jun01_17-32-02_cibcgpu4_ECG_SpatioTemporalNet1D/checkpoint_0040.pth.tar", type=str, metavar="PATH", help='Path to pretrained model')
 parser.add_argument('--batch_size', default=512, type=int, metavar='N', help='Batch size for training')
 parser.add_argument('--epochs', default=[70, 50, 30, 20, 20], type=int, nargs="+", metavar='N', help='Number of epochs to train')
 parser.add_argument('--seeds', default=[42, 43, 44, 45, 46], type=int, nargs="+", metavar='N', help='Seeds for reproducibility')
-parser.add_argument('--finetuning_ratios', default=[0.01], type=float, nargs="+", metavar='N', help='Finetuning Ratios')
+parser.add_argument('--finetuning_ratios', default=[0.01, 0.05, 0.1, 0.5, 1.0], type=float, nargs="+", metavar='N', help='Finetuning Ratios')
 parser.add_argument('--task', default="LVEF", choices=["LVEF", "KCL"], type=str, metavar='N', help='Task to train on')
 parser.add_argument('--num_workers', default=32, type=int, metavar='N', help='Number of workers for data loading')
-parser.add_argument('--lr', default=[1e-3, 0.1, 1e-4], type=float, nargs="+", metavar='N', help='Learning Rate as [lr, fast_lr, slow_lr]')
+parser.add_argument('--lr', default=[1e-3, 0.02, 1e-4], type=float, nargs="+", metavar='N', help='Learning Rate as [lr, fast_lr, slow_lr]')
 parser.add_argument('--arch', default='ECG_SpatioTemporalNet1D', choices=["ECG_SpatioTemporalNet1D", "BaselineConvNet"], type=str, metavar='ARCH', help='Architecture to use')
+parser.add_argument('--logtowandb', default=True, type=bool, metavar='bool', help='Log to wandb')
 #, 0.05, 0.1, 0.5, 1.0
 
 def seed_everything(seed=42):
@@ -46,7 +47,7 @@ def seed_everything(seed=42):
 
     # For CPU operations (reproducibility)
     torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = True
+    torch.backends.cudnn.benchmark = False
 
 
 def create_model(args, baseline, finetune=False):
@@ -96,11 +97,13 @@ def main():
 
     results_file = f"results_{args.task}_{args.pretrained.split('/')[1]}_ep_{args.pretrained.split('/')[2].split('.')[0][-4:]}"
 
+    # Logging
     writer = SummaryWriter(log_dir=f"classification_runs/{results_file}")
-    logging.basicConfig(filename=os.path.join(writer.log_dir, 'classification.log'), level=logging.DEBUG)
+    logging.basicConfig(filename=os.path.join(writer.log_dir, 'classification.log'), level=logging.INFO)
     print(f"Logging has been saved at {writer.log_dir}.")
     logging.info(f"Pretraining with the file {args.pretrained} on {args.task} task with model {args.arch}.")
     logging.info(f"args: {args}")
+
 
     for seed in seeds:
         print(f"Running with seed {seed}")
@@ -144,7 +147,7 @@ def main():
                     key = f"PreTrained/Finetuned"
                     print(f"Training Pretrained Model with Finetuning")
                 
-                print(f"Requires Grad = {model.mconv1.weight.requires_grad if args.arch == 'BaselineConvNet' else model.firstLayer[0].weight.requires_grad}")
+                print(f"Requires Grad = {model.conv1.weight.requires_grad if args.arch == 'BaselineConvNet' else model.firstLayer[0].weight.requires_grad}")
                 model = torch.nn.DataParallel(model, device_ids=gpuIds)
                 model.to(device)
                 numEpoch = epochs[i]
@@ -153,21 +156,35 @@ def main():
                 if x == 2:
                     params = [{'params':getattr(model,i).parameters(), 'lr': slow_lr} if i.find("finalLayer")==-1 else {'params':getattr(model,i).parameters(), 'lr': fast_lr} for i,x in model.named_children()]
                     optimizer = torch.optim.Adam(params)
+                
+                if args.logtowandb:
+                    wandbrun = wandb.init(
+                        project=results_file,
+                        notes=f"Seed {seed}, with {training_size} ECGs, {key} model",
+                        config = dict(vars(args)),
+                        entity="deekshith",
+                        reinit=True,
+                        name=f"{seed}_{int(args.finetuning_ratios[i]*100)}_perc_{key}"
+                    )
 
                 if args.task == "LVEF":
                     print(f"Training on LVEF Task")
-                    best_auc_test = Training.train(
+                    best_auc_test, best_acc_test = Training.train(
                         model=model,
                         trainDataLoader=train_loader,
                         testDataLoader=val_loader,
                         numEpoch=numEpoch,
                         optimizer=optimizer,
+                        modelSaveDir=writer.log_dir,
+                        modelName=f"{seed}_{int(args.finetuning_ratios[i]*100)}_perc_{key}",
+                        logToWandB=args.logtowandb,
+
                     )
                 elif args.task == "KCL":
                     print(f"Training on KCL Task")
                     lossParams = dict(highThresh = 5, lowThresh=4 ,type = 'binary cross entropy')
                     lossFun = Training.loss_bce_kcl
-                    best_auc_test = Training.trainNetwork_balancedClassification(
+                    best_auc_test, best_acc_test = Training.trainNetwork_balancedClassification(
                         network=model,
                         trainDataLoader_normals=train_loader[0],
                         trainDataLoader_abnormals=train_loader[1],
@@ -178,13 +195,18 @@ def main():
                         lossParams=lossParams,
                         label="KCL",
                         leads=[0,1,2,3,4,5,6,7],
-                        logToWandB=False
+                        modelSaveDir=writer.log_dir,
+                        modelName=f"{seed}_{int(args.finetuning_ratios[i]*100)}_perc_{key}",
+                        logToWandB=args.logtowandb,
                     )
 
 
-                logging.info(f'For seed {seed}, with {training_size}\tECGs, {key}\tmodel  BEST_AUC: {best_auc_test}')
+                logging.info(f'For seed {seed}, with {training_size} ECGs, {key} model BEST_AUC: {best_auc_test} BEST_ACC: {best_acc_test}')
 
                 output[training_size][key] = best_auc_test
+
+                if args.logtowandb:
+                    wandbrun.finish()
 
             
             results[seed].append(output)

@@ -3,6 +3,9 @@ import torch.nn as nn
 import numpy as np
 from sklearn import metrics
 import matplotlib.pyplot as plt
+import wandb
+import copy
+import os
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -34,9 +37,10 @@ def evaluate(network, dataloader, lossFun):
     return running_loss, allParams, allPredictions, allNoiseVals
 
 
-def train(model, trainDataLoader, testDataLoader, numEpoch, optimizer):
+def train(model, trainDataLoader, testDataLoader, numEpoch, optimizer, modelSaveDir, modelName, logToWandB=False ):
     print(f"Beginning Training for Network {model.__class__.__name__}")
     best_auc_test = 0.5
+    best_acc = 0.5
 
     for ep in range(numEpoch):
         print(f"Epoch {ep+1} of {numEpoch}")
@@ -47,7 +51,7 @@ def train(model, trainDataLoader, testDataLoader, numEpoch, optimizer):
         running_loss = 0.0
 
         for ecg, clinicalParam in trainDataLoader:
-            print(f'Running through training batches {count} of {len(trainDataLoader)}', end='\r')
+            print(f'Running through training batches {count+1} of {len(trainDataLoader)}', end='\r')
 
             count += 1
             optimizer.zero_grad()
@@ -85,81 +89,130 @@ def train(model, trainDataLoader, testDataLoader, numEpoch, optimizer):
 
         if auc_test > best_auc_test:
             best_auc_test = auc_test
+
+            best_model = copy.deepcopy(model.state_dict())
+            torch.save(best_model , os.path.join(modelSaveDir, f"{modelName}_best.pth"))
+
         
+        if acc_test > best_acc:
+            best_acc = acc_test
+        
+        precision, recall, thresholds = metrics.precision_recall_curve(allParams_test, allPredictions_test)
+        denominator = recall+precision
+        if np.any(np.isclose(denominator,[0.0])):
+            print('\nSome precision+recall were zero. Setting to 1.\n')
+            denominator[np.isclose(denominator,[0.0])] = 1
+        
+        f1_scores = 2*recall*precision/(recall+precision)
+        f1_scores[np.isnan(f1_scores)] = 0
+        maxIx = np.argmax(f1_scores)
 
-        # plt.figure(1)
-        # fig, ax1 = plt.subplots(1, 2)
+        f1_score_test_max = f1_scores[maxIx]
+        thresholdForMax = thresholds[maxIx]
 
-        print(f'Train AUC: {auc_train:0.6f} test AUC: {auc_test:0.6f}')
-        # ax1[0].plot(falsePos_train, truePos_train)
-        # ax1[0].set_title(f'ROC train, AUC: {auc_train:0.3f}')
-        # ax1[1].plot(falsePos_test, truePos_test)
-        # ax1[1].set_title(f'ROC Test, AUC: {auc_test:0.3f}')
-        # plt.suptitle(f'ROC curves train AUC: {auc_train:0.3f} test AUC: {auc_test:0.3f} @ Epoch {ep+1} of {numEpoch}')
-        # plt.show()
+        acc_test_f1max = metrics.balanced_accuracy_score(allParams_test,(allPredictions_test>thresholdForMax).astype('float'))
+        acc_train_f1max = metrics.balanced_accuracy_score(allParams_train,(allPredictions_train>thresholdForMax).astype('float'))
+
+        acc_test = metrics.balanced_accuracy_score(allParams_test,(allPredictions_test>0.5).astype('float'))
+        acc_train = metrics.balanced_accuracy_score(allParams_train,(allPredictions_train>0.5).astype('float'))
+
+        print(f'Weighted Acc at 50% cutoff: {acc_train:.4f} train {acc_test:.4f} test')
+
+        if logToWandB:
+            plt.figure(1)
+            fig, ax1 = plt.subplots(1, 2)
+
+            print(f'Train AUC: {auc_train:0.6f} test AUC: {auc_test:0.6f}')
+            ax1[0].plot(falsePos_train, truePos_train)
+            ax1[0].set_title(f'ROC train, AUC: {auc_train:0.3f}')
+            ax1[1].plot(falsePos_test, truePos_test)
+            ax1[1].set_title(f'ROC Test, AUC: {auc_test:0.3f}')
+            plt.suptitle(f'ROC curves train AUC: {auc_train:0.3f} test AUC: {auc_test:0.3f} @ Epoch {ep+1} of {numEpoch}')
+            
+            print(f"Figures Made")
+            logDict = {
+                'Epoch': ep,
+                'Training Loss': currTrainLoss,
+                'Test Loss': currTestLoss,
+                'auc test': auc_test,
+                'acc test': acc_test,
+                'acc test f1max': acc_test_f1max,
+                'f1 max test': f1_score_test_max,
+                'max f1 threshold': thresholdForMax,
+                'auc train': auc_train,
+                'acc train': acc_train,
+                'acc train f1max': acc_train_f1max,
+                'ROCs individual': plt
+            }
+            print(f"Log Dict Created and Logging to WandB")
+            wandb.log(logDict)
 
     print(f"Best AUC Test: {best_auc_test}")
-    return best_auc_test
+    return best_auc_test , best_acc
 
 def loss_bce_kcl(predictedVal,clinicalParam,lossParams):
 	clinicalParam = ((clinicalParam <= lossParams['highThresh']) * (clinicalParam >= lossParams['lowThresh'])).float()
 	return bce_loss(predictedVal,clinicalParam)
 
 def evaluate_balanced(network,dataLoaders,lossFun,lossParams,leads,lookForFig=False):
-	network.eval()
-	
-	kclVal_disease = 'nan'
-	prediction_disease = 'nan'
-	kclVal_healthy = 'nan'
-	prediction_healthy = 'nan'
-	pltCol = 0
-	lookForFigInput = lookForFig
-	                #               plt.figure(2)
-                    # fig1,ax1 = plt.subplots(8,2)     
+    network.eval()
+    plt.figure(2)
+    fig, ax1 = plt.subplots(8,2, figsize=(4*15, 4*8*2.5))
+    pltCol = 0
 					
-	with torch.no_grad():
-		running_loss = 0.
+    with torch.no_grad():
+        running_loss = 0.
 		
-		allParams = torch.empty(0).to(device)
-		allPredictions = torch.empty(0).to(device)
-		for dataLoader in dataLoaders:
-			for ecg, clinicalParam in dataLoader:
-				ecg = ecg[:,leads,:].to(device)
-				clinicalParam = clinicalParam.to(device).unsqueeze(1) 
-				predictedVal = network(ecg)
-				lossVal = lossFun(predictedVal,clinicalParam,lossParams)
-				running_loss += lossVal.item()
+        allParams = torch.empty(0).to(device)
+        allPredictions = torch.empty(0).to(device)
+        for dataLoader in dataLoaders:
+            for ecg, clinicalParam in dataLoader:
+                ecg = ecg[:,leads,:].to(device)
+                clinicalParam = clinicalParam.to(device).unsqueeze(1) 
+                predictedVal = network(ecg)
+                lossVal = lossFun(predictedVal,clinicalParam,lossParams)
+                running_loss += lossVal.item()
 
-				allParams = torch.cat((allParams, clinicalParam.squeeze()) )
-				allPredictions = torch.cat((allPredictions, predictedVal.squeeze()))
-				if lookForFig:
-					binaryParams = ((clinicalParam <= lossParams['highThresh']) * (clinicalParam >= lossParams['lowThresh'])).float()
-					agreement = torch.abs(binaryParams.squeeze()-predictedVal.squeeze())
-					ecgIx = torch.argmax(agreement)
-					disagree_kcl = clinicalParam[ecgIx,...]
-					disagree_pred = allPredictions[ecgIx,...]
-					for lead in range(8):
-						ax1[lead,pltCol].plot(ecg[ecgIx,lead,:].detach().clone().squeeze().cpu().numpy(),'k')
-					ecgIx = torch.argmin(agreement)
-					agree_kcl = clinicalParam[ecgIx,...]
-					agree_pred = allPredictions[ecgIx,...]
-					for lead in range(8):
-						ax1[lead,pltCol+1].plot(ecg[ecgIx,lead,:].detach().clone().squeeze().cpu().numpy(),'k')
-					lookForFig = False
-					ax1[0,pltCol].text(0,100,f'Disagree: {disagree_kcl}, pred: {disagree_pred}.')
-					ax1[0,pltCol+1].text(0,100,f'Agree: {agree_kcl}, pred: {agree_pred}.')
-					print(f'Disagree: {disagree_kcl}, pred: {disagree_pred}.\nAgree: {agree_kcl}, pred: {agree_pred}.')		
-		totalDataLoaderLens = [len(d) for d in dataLoaders]
-		running_loss = running_loss/sum(totalDataLoaderLens)
+                allParams = torch.cat((allParams, clinicalParam.squeeze()) )
+                allPredictions = torch.cat((allPredictions, predictedVal.squeeze()))
+                if lookForFig:
+                    binaryParams = ((clinicalParam <= lossParams['highThresh']) * (clinicalParam >= lossParams['lowThresh'])).float()
+                    agreement = torch.abs(binaryParams.squeeze()-predictedVal.squeeze())
+                    ecgIx = torch.argmax(agreement)
+                    disagree_kcl = clinicalParam[ecgIx,...]
+                    disagree_pred = allPredictions[ecgIx,...]
+                    for lead in range(8):
+                        ax1[lead,pltCol].plot(ecg[ecgIx,lead,:].detach().clone().squeeze().cpu().numpy(),'k')
+                    ecgIx = torch.argmin(agreement)
+                    agree_kcl = clinicalParam[ecgIx,...]
+                    agree_pred = allPredictions[ecgIx,...]
+                    for lead in range(8):
+                        ax1[lead,pltCol+1].plot(ecg[ecgIx,lead,:].detach().clone().squeeze().cpu().numpy(),'k')
+                    lookForFig = False
+                    ax1[0,pltCol].text(0,100, f'Disagree: {disagree_kcl.item()}, pred: {disagree_pred}.')
+                    ax1[0,pltCol+1].text(0, 100,f'Agree: {agree_kcl.item()}, pred: {agree_pred}.')
+                    fig.suptitle(f'Disagree: {disagree_kcl.item()}, pred: {disagree_pred}.\nAgree: {agree_kcl.item()}, pred: {agree_pred}.', fontsize=50, y=0.95)
+                    print(f'Disagree: {disagree_kcl.item()}, pred: {disagree_pred}.\nAgree: {agree_kcl.item()}, pred: {agree_pred}.')		
+        totalDataLoaderLens = [len(d) for d in dataLoaders]
+        running_loss = running_loss/sum(totalDataLoaderLens)
+        plt.subplots_adjust(left=0.1, right=0.9, bottom=0.1, top=0.9, wspace=0.2, hspace=0.3)
+        plot_margin = 0.25
+
+        # x0, x1, y0, y1 = plt.axis()
+        # plt.axis((x0 - plot_margin,
+        #         x1 + plot_margin,
+        #         y0 - plot_margin,
+        #         y1 + plot_margin))
 
 	
-	return running_loss, allParams, allPredictions
+        return running_loss, allParams, allPredictions, fig
 
 
 def trainNetwork_balancedClassification(network, trainDataLoader_normals, trainDataLoader_abnormals, testDataLoader, numEpoch, optimizer, lossFun, lossParams, label, logToWandB, leads):
     print(f"Beginning Training for Network {network.__class__.__name__}")
     prevTrainingLoss = 0.0
     bestEvalMetric_test = 0.5
+    best_acc = 0.5
     maxBatches = max(len(trainDataLoader_normals), len(trainDataLoader_abnormals))
 
     for ep in range(numEpoch):
@@ -219,9 +272,9 @@ def trainNetwork_balancedClassification(network, trainDataLoader_normals, trainD
         print(f"Epoch {ep+1} train loss {currTrainingLoss}, Diff {currTrainingLoss - prevTrainingLoss}")
         prevTrainingLoss = currTrainingLoss
         print('Evaling test')
-        currTestLoss, allParams_test, allPredictions_test = evaluate_balanced(network,[testDataLoader],lossFun,lossParams,leads,lookForFig=False)
+        currTestLoss, allParams_test, allPredictions_test, ecgFig = evaluate_balanced(network,[testDataLoader],lossFun,lossParams,leads,lookForFig=True)
         print('Evaling train')
-        currTrainLoss, allParams_train, allPredictions_train = evaluate_balanced(network,[trainDataLoader_normals,trainDataLoader_abnormals],
+        currTrainLoss, allParams_train, allPredictions_train, _ = evaluate_balanced(network,[trainDataLoader_normals,trainDataLoader_abnormals],
 																					lossFun,lossParams,leads)
         print(f"train loss: {currTrainLoss}, val loss: {currTestLoss}")
 
@@ -248,6 +301,8 @@ def trainNetwork_balancedClassification(network, trainDataLoader_normals, trainD
              bestEvalMetric_test = evalMetric_test
         
         
+        
+        
         precision, recall, thresholds = metrics.precision_recall_curve(allParams_test, allPredictions_test)
         denominator = recall+precision
         if np.any(np.isclose(denominator,[0.0])):
@@ -267,11 +322,45 @@ def trainNetwork_balancedClassification(network, trainDataLoader_normals, trainD
         acc_test = metrics.balanced_accuracy_score(allParams_test,(allPredictions_test>0.5).astype('float'))
         acc_train = metrics.balanced_accuracy_score(allParams_train,(allPredictions_train>0.5).astype('float'))
         
+        if acc_test > best_acc:
+            best_acc = acc_test
+        
         print(f'Weighted Acc at 50% cutoff: {acc_train:.4f} train {acc_test:.4f} test')
-        print(f'train score: {evalMetric_train:0.3f} test score: {evalMetric_test:0.3f}')
+
+        if logToWandB:
+            print('Logging to wandb')
+            plt.figure(1)
+            fig,ax1 = plt.subplots(1,2)
+
+            print(f'train score: {evalMetric_train:0.4f} test score: {evalMetric_test:0.4f}')
+            ax1[0].plot(falsePos_train,truePos_train)
+            ax1[0].set_title(f'ROC train, AUC: {evalMetric_train:0.3f}')
+            ax1[1].plot(falsePos_test,truePos_test)
+            ax1[1].set_title(f'ROC test, AUC: {evalMetric_test:0.3f}')
+            plt.suptitle(f'ROC curves train AUC: {evalMetric_train:0.3f} test AUC: {evalMetric_test:0.3f}')
+
+            print(f"Figures Made")
+            logDict = {
+                 'Epoch': ep,
+                 'Training Loss': currTrainingLoss,
+                 'Test Loss': currTestLoss,
+                 'auc test': evalMetric_test,
+                 'acc test': acc_test,
+                 'acc test f1max': acc_test_f1max,
+                 'f1 max test': f1_score_test_max,
+                 'max f1 threshold': thresholdForMax,
+                 'auc train': evalMetric_train,
+                 'acc train': acc_train,
+                 'acc train f1max': acc_train_f1max,
+                 'ROCs individual': plt,
+                 'ECGs Examples': ecgFig
+            }
+            print(f"Log Dict Created and Logging to WandB")
+            wandb.log(logDict)
+            plt.close(ecgFig)
 
     print(f"Best AUC Test: {bestEvalMetric_test}")
-    return bestEvalMetric_test
+    return bestEvalMetric_test, best_acc
 
 
 

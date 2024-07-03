@@ -13,6 +13,7 @@ from utils import save_config_file, accuracy, save_checkpoint
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device_type = "cuda" if torch.cuda.is_available() else "cpu"
 
 class AverageMeter:
     """Computes and stores the average and current value"""
@@ -50,7 +51,7 @@ class SimCLR(object):
         self.checkpoint_freq = args.checkpoint_freq
         
         self.n_views = 2
-        self.fp16_precision = False
+        self.fp16_precision = True
 
         self.writer = SummaryWriter(comment=f"_{args.arch}")
         logging.basicConfig(filename=os.path.join(self.writer.log_dir, 'training.log'), level=logging.DEBUG)
@@ -145,12 +146,13 @@ class SimCLR(object):
             ncombinations += 1
 
         loss = loss/(loss_terms*ncombinations)
+        
         return loss, sim_matrix_exp, torch.diag(torch.ones_like(sim_matrix_exp))
 
 
     def train(self, train_loader):
 
-        scaler = GradScaler(enabled=self.fp16_precision)
+        # scaler = GradScaler(enabled=self.fp16_precision)
 
         # save config file
         # save_config_file(self.writer.log_dir, self.args)
@@ -168,6 +170,8 @@ class SimCLR(object):
         print(f"Start SimCLR training for {self.epochs} epochs {info}")
         logging.info(f"Training with initial learning rate lr={self.lr} and batch size={self.batch_size} and warmup epochs={self.warmup_epochs}.")
 
+        self.model.train()
+
         for epoch_counter in range(self.curr_epochs+1, self.epochs):
             print(f"Epoch {epoch_counter}")
             for images, patientIds in tqdm(train_loader):
@@ -177,20 +181,32 @@ class SimCLR(object):
                 else:
                     images1 = images[0].to(device)
                     images2 = images[1].to(device)
-
-                with autocast(enabled=self.fp16_precision):
-                    features1 = self.model(images1)
-                    features2 = self.model(images2)
-                    features = torch.cat([features1, features2], dim=1)
-                    features = torch.nn.functional.normalize(features, p=2, dim=2)
-                    loss, logits, labels = self.contrastive_loss(features, patientIds)
-
+                
+                if torch.isnan(images1).any() or torch.isinf(images1).any() or torch.isnan(images2).any() or torch.isinf(images2).any():
+                    print(f"NaN or Inf detected in loss at iteration {n_iter} and 1")
+                    import code; code.interact(local=locals())
+                
                 self.optimizer.zero_grad()
 
-                scaler.scale(loss).backward()
+                #with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+                features1 = self.model(images1)
+                features2 = self.model(images2)
+                features = torch.cat([features1, features2], dim=1)
+                if torch.isnan(features).any() or torch.isinf(features).any():
+                    print(f"NaN or Inf detected in loss at iteration {n_iter} and 2")
+                    import code; code.interact(local=locals())
+                features = torch.nn.functional.normalize(features, p=2, dim=2)
+                loss, logits, labels = self.contrastive_loss(features, patientIds)
 
-                scaler.step(self.optimizer)
-                scaler.update()
+
+                loss.backward()
+                norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+                self.optimizer.step()
+
+                if torch.isnan(loss).any() or torch.isinf(loss).any():
+                    print(f"NaN or Inf detected in loss at iteration {n_iter} and 3")
+                    import code; code.interact(local=locals())
+
                 loss_meter.update(loss.item(), images1.size(0))
                 if n_iter % 1 == 0:
                     top1, top5 = accuracy(logits, labels, topk=(1, 5))
@@ -200,8 +216,10 @@ class SimCLR(object):
                     self.writer.add_scalar('acc/top1', acc1_meter.avg, global_step=n_iter)
                     self.writer.add_scalar('acc/top5', acc5_meter.avg, global_step=n_iter)
                     self.writer.add_scalar('learning_rate', self.scheduler.get_last_lr()[0], global_step=n_iter)
+                    self.writer.add_scalar('norm', norm, global_step=n_iter)
 
                 n_iter += 1
+                
 
             # warmup for the first 10 epochs
             if epoch_counter >= self.warmup_epochs:

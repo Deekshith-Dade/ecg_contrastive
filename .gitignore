@@ -10,3 +10,5 @@
 /results
 /*.json
 /kcl_patient_splits
+/output.csv
+/wandb

@@ -88,13 +88,37 @@ class BaselineConvNet(nn.Module):
             x_i = x[:, i, :].unsqueeze(1)
 
             x_i = self.batch_norm1(self.activation(self.conv1(x_i)))
+            if torch.isnan(x_i).any():
+                print(f"NaN Detected in Conv1")
+                import code; code.interact(local=locals())
             x_i = self.batch_norm2(self.activation(self.conv2(x_i)))
+            if torch.isnan(x_i).any():
+                print(f"NaN Detected in Conv2")
+                import code; code.interact(local=locals())
             x_i = self.batch_norm3(self.activation(self.conv3(x_i)))
+            if torch.isnan(x_i).any():
+                print(f"NaN Detected in Conv3")
+                import code; code.interact(local=locals())
             x_i = self.batch_norm4(self.activation(self.conv4(x_i)))
+            if torch.isnan(x_i).any():
+                print(f"NaN Detected in Conv4")
+                import code; code.interact(local=locals())
             x_i = self.batch_norm5(self.activation(self.conv5(x_i)))
+            if torch.isnan(x_i).any():
+                print(f"NaN Detected in Conv5")
+                import code; code.interact(local=locals())
             x_i = self.batch_norm6(self.activation(self.conv6(x_i)))
+            if torch.isnan(x_i).any():
+                print(f"NaN Detected in Conv6")
+                import code; code.interact(local=locals())
             x_i = self.avg_pool(x_i)
+            if torch.isnan(x_i).any():
+                print(f"NaN Detected in avghpool")
+                import code; code.interact(local=locals())
             x_i = nn.Flatten()(x_i)
+            if torch.isnan(x_i).any():
+                print(f"NaN Detected in flatten")
+                import code; code.interact(local=locals())
 
             h[:, i, :] = x_i
 
@@ -105,14 +129,26 @@ class BaselineConvNet(nn.Module):
             h_1 = h_1.mean(1,keepdim=True)
             h = torch.cat((h_0, h_1), dim=1)
             self.avg_embeddings = False
+        if torch.isnan(h).any():
+                print(f"NaN Detected in avg_embeddings")
+                import code; code.interact(local=locals())
 
         if self.avg_embeddings:
             h = h.mean(dim=1, keepdim=True)
+        if torch.isnan(h).any():
+                print(f"NaN Detected in mean")
+                import code; code.interact(local=locals())
 
         h = self.finalLayer(h)
+        if torch.isnan(h).any():
+                print(f"NaN Detected in finalLayer")
+                import code; code.interact(local=locals())
 
         if self.classification:
             h = h.squeeze(1)
+            if torch.isnan(h).any():
+                print(f"NaN Detected in here")
+                import code; code.interact(local=locals())
 
         return h
 
