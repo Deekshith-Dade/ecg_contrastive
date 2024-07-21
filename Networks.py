@@ -1,13 +1,59 @@
 import torch
 import torch.nn as nn
 
+
+class ModelGroup(nn.Module):
+
+    def __init__(self, arch, parameters, lead_groups, classification=False):
+        super(ModelGroup, self).__init__()
+        self.lead_groups = lead_groups
+        self.classification = classification
+        self.arch = arch
+        self.n_embeddings = 256 if arch == "BaselineConvNet" else 512
+        # Model Initialization
+        if arch == "BaselineConvNet":
+            self.model_g1 = BaselineConvNet()
+            self.model_g2 = BaselineConvNet()
+        elif arch == "ECG_SpatioTemporalNet1D":
+            self.model_g1 = ECG_SpatioTemporalNet1D(**parameters)
+            self.model_g2 = ECG_SpatioTemporalNet1D(**parameters)
+
+        if self.classification:
+            self.finalLayer = nn.Sequential(
+                nn.Linear(self.n_embeddings, 1),
+                nn.Sigmoid()
+            )
+            self.model_g1.finalLayer = nn.Sequential(
+                nn.Identity(),
+            )
+            self.model_g2.finalLayer = nn.Sequential(
+                nn.Identity(),
+            )
+    
+    def forward(self, x):
+        input1 = x[:, self.lead_groups[0], :] # (batch_size, nleads_g1(4), 2500)
+        input2 = x[:, self.lead_groups[1], :] # (batch_size, nleads_g2(4), 2500)
+
+        out1 = self.model_g1(input1) # (batch_size, n_leads_g1, 128) if not classification else (batch_size, n_leads_g1, 256)
+        out2 = self.model_g2(input2) # (batch_size, n_leads_g2, 128) if not classification else (batch_size, n_leads_g2, 256)
+
+        out1 = out1.mean(dim=1, keepdim=True) # (batch_size, 1, 128) if not classification else (batch_size, 1, 256)
+        out2 = out2.mean(dim=1, keepdim=True) # (batch_size, 1, 128) if not classification else (batch_size, 1, 256)
+        
+        output = torch.cat((out1, out2), dim=1) # (batch_size, (n_leads_g1 + n_leads_g2)(8), 128) if not classification else (batch_size, (n_leads_g1 + n_leads_g2)(8), 256)
+
+        if self.classification:
+            output = output.mean(dim=1, keepdim=True) # (batch_size, 1, 256)
+            output = self.finalLayer(output).squeeze(1) # (batch_size, 1)
+
+        return output
+
 class BaselineConvNet(nn.Module):
 
-    def __init__(self, classification=False, avg_embeddings=False, lead_grouping=False):
+    def __init__(self, classification=False, avg_embeddings=False):
         super(BaselineConvNet, self).__init__()
         self.classification = classification
         self.avg_embeddings = avg_embeddings
-        self.lead_grouping = lead_grouping
         self.conv1 = nn.Conv1d(in_channels=1, 
                                out_channels=16, 
                                kernel_size=7, 
@@ -88,67 +134,35 @@ class BaselineConvNet(nn.Module):
             x_i = x[:, i, :].unsqueeze(1)
 
             x_i = self.batch_norm1(self.activation(self.conv1(x_i)))
-            if torch.isnan(x_i).any():
-                print(f"NaN Detected in Conv1")
-                import code; code.interact(local=locals())
+            
             x_i = self.batch_norm2(self.activation(self.conv2(x_i)))
-            if torch.isnan(x_i).any():
-                print(f"NaN Detected in Conv2")
-                import code; code.interact(local=locals())
+            
             x_i = self.batch_norm3(self.activation(self.conv3(x_i)))
-            if torch.isnan(x_i).any():
-                print(f"NaN Detected in Conv3")
-                import code; code.interact(local=locals())
+            
             x_i = self.batch_norm4(self.activation(self.conv4(x_i)))
-            if torch.isnan(x_i).any():
-                print(f"NaN Detected in Conv4")
-                import code; code.interact(local=locals())
+            
             x_i = self.batch_norm5(self.activation(self.conv5(x_i)))
-            if torch.isnan(x_i).any():
-                print(f"NaN Detected in Conv5")
-                import code; code.interact(local=locals())
+            
             x_i = self.batch_norm6(self.activation(self.conv6(x_i)))
-            if torch.isnan(x_i).any():
-                print(f"NaN Detected in Conv6")
-                import code; code.interact(local=locals())
+            
             x_i = self.avg_pool(x_i)
-            if torch.isnan(x_i).any():
-                print(f"NaN Detected in avghpool")
-                import code; code.interact(local=locals())
+            
             x_i = nn.Flatten()(x_i)
-            if torch.isnan(x_i).any():
-                print(f"NaN Detected in flatten")
-                import code; code.interact(local=locals())
+            
 
             h[:, i, :] = x_i
 
-        if self.lead_grouping:
-            h_0 = h[:,[0,1,6,7],:]
-            h_1 = h[:,[2,3,4,5],:]
-            h_0 = h_0.mean(1,keepdim=True)
-            h_1 = h_1.mean(1,keepdim=True)
-            h = torch.cat((h_0, h_1), dim=1)
-            self.avg_embeddings = False
-        if torch.isnan(h).any():
-                print(f"NaN Detected in avg_embeddings")
-                import code; code.interact(local=locals())
 
         if self.avg_embeddings:
             h = h.mean(dim=1, keepdim=True)
-        if torch.isnan(h).any():
-                print(f"NaN Detected in mean")
-                import code; code.interact(local=locals())
+        
 
         h = self.finalLayer(h)
-        if torch.isnan(h).any():
-                print(f"NaN Detected in finalLayer")
-                import code; code.interact(local=locals())
+        
 
         if self.classification:
             h = h.squeeze(1)
-            if torch.isnan(h).any():
-                print(f"NaN Detected in here")
-                import code; code.interact(local=locals())
+            
 
         return h
 

@@ -4,6 +4,7 @@ import pickle
 import random
 import torch
 import pandas as pd
+import time
 
 def dataprepKCL(args):
     dataDir = '/usr/sci/cibc/Maprodxn/ClinicalECGData/AllClinicalECGs/'
@@ -111,6 +112,7 @@ def dataprepLVEF(args):
     return train_loaders, val_loader
 
 def splitKCLPatients(seed):
+    start = time.time()
     dataDir = '/usr/sci/cibc/Maprodxn/ClinicalECGData/AllClinicalECGs/'
     timeCutoff = 3600 #seconds
     lowerCutoff = 1800 #seconds
@@ -174,8 +176,10 @@ def splitKCLPatients(seed):
         pickle.dump(testECGs, file)
 
     print(f'Found {len(testECGs)} tests and {len(trainECGs)} trains. In training, {len(trainECGs_normal)} are normal, {len(trainECGs_abnormal)} are abnormal')
+    print(f'The process took {time.time()-start} seconds')
 
 def splitPatientsLVEF(seed):
+    start = time.time()
     baseDir = ''
     dataDir = '/usr/sci/cibc/Maprodxn/ClinicalECGData/LVEFCohort/pythonData/'
     modelDir = ''
@@ -206,5 +210,5 @@ def splitPatientsLVEF(seed):
     with open('patient_splits/validation_patients.pkl', 'wb') as file:
         pickle.dump(validation_patients, file)
     print(f"Out of Total {numPatients} Splitting {len(pre_train_patients)} for pre-train and finetuning, {len(validation_patients)} for validation")
-
+    print(f'The process took {time.time()-start} seconds')
 

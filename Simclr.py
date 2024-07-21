@@ -53,7 +53,7 @@ class SimCLR(object):
         self.n_views = 2
         self.fp16_precision = True
 
-        self.writer = SummaryWriter(comment=f"_{args.arch}")
+        self.writer = SummaryWriter(comment=f'_{args.arch}_{"LG" if self.lead_groupings else ""}')
         logging.basicConfig(filename=os.path.join(self.writer.log_dir, 'training.log'), level=logging.DEBUG)
 
         logging.info(f"args {args}")
@@ -227,13 +227,14 @@ class SimCLR(object):
             logging.debug(f"Epoch: {epoch_counter}\tLoss: {loss}\tTop1 accuracy: {top1[0]}\tTop5 accuracy: {top5[0]}")
 
             # save model checkpoints
-            if (epoch_counter) % self.checkpoint_freq == 0:
+            if (epoch_counter) % self.checkpoint_freq == 0 or (epoch_counter+1 == self.epochs) :
                 checkpoint_name = f"checkpoint{'_lead_groupings' if self.lead_groupings else ''}_{epoch_counter:04d}.pth.tar"
-                save_checkpoint({
+                config = {
                     'epoch': epoch_counter,
                     'arch': self.args.arch,
-                    'state_dict': self.model.state_dict(),
+                    'state_dict': self.model.state_dict() if not self.lead_groupings else {'model_g1': self.model.module.model_g1.state_dict(), 'model_g2': self.model.module.model_g2.state_dict()},
                     'optimizer': self.optimizer.state_dict(),
-                }, is_best=False, filename=os.path.join(self.writer.log_dir, checkpoint_name))
+                }
+                save_checkpoint(config, is_best=False, filename=os.path.join(self.writer.log_dir, checkpoint_name))
                 logging.info(f"Model checkpoint and metadata has been saved at {self.writer.log_dir}.")
         logging.info("Training has finished.")

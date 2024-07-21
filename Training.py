@@ -3,6 +3,8 @@ import torch.nn as nn
 import numpy as np
 from sklearn import metrics
 import matplotlib.pyplot as plt
+from torch.utils.tensorboard import SummaryWriter
+
 import wandb
 import copy
 import os
@@ -37,10 +39,14 @@ def evaluate(network, dataloader, lossFun):
     return running_loss, allParams, allPredictions, allNoiseVals
 
 
-def train(model, trainDataLoader, testDataLoader, numEpoch, optimizer, modelSaveDir, modelName, logToWandB=False ):
+def train(model, trainDataLoader, testDataLoader, numEpoch, optimizer, modelSaveDir, modelName, logToTensorBoard,logToWandB=False, ):
     print(f"Beginning Training for Network {model.__class__.__name__}")
+    exhausted = 0
     best_auc_test = 0.5
     best_acc = 0.5
+    if logToTensorBoard:
+        writer = SummaryWriter(log_dir=os.path.join(modelSaveDir, "tensorboard",modelName))
+        loss_meter = AverageMeter()
 
     for ep in range(numEpoch):
         print(f"Epoch {ep+1} of {numEpoch}")
@@ -65,6 +71,11 @@ def train(model, trainDataLoader, testDataLoader, numEpoch, optimizer, modelSave
 
                 loss.backward()
                 optimizer.step()
+
+                if logToTensorBoard:
+                    loss_meter.update(loss.item(), ecg.size(0))
+                    writer.add_scalar('Loss/train', loss_meter.avg, ep*len(trainDataLoader)+count)
+                
             
         batch_total_loss = running_loss / len(trainDataLoader)
         print()
@@ -87,42 +98,54 @@ def train(model, trainDataLoader, testDataLoader, numEpoch, optimizer, modelSave
         auc_train = metrics.roc_auc_score(allParams_train, allPredictions_train)
         auc_test = metrics.roc_auc_score(allParams_test, allPredictions_test)
 
+        
+
         if auc_test > best_auc_test:
             best_auc_test = auc_test
 
             best_model = copy.deepcopy(model.state_dict())
-            torch.save(best_model , os.path.join(modelSaveDir, f"{modelName}_best.pth"))
+            os.makedirs(os.path.join(modelSaveDir, modelName[0:2]), exist_ok=True)
+            torch.save(best_model , os.path.join(modelSaveDir, modelName[0:2] ,f"{modelName}_best.pth"))
+            print(f"Model saved at {os.path.join(modelSaveDir, modelName[0:2] ,f'{modelName}_best.pth')} @ Epoch {ep+1} of {numEpoch}")
 
         
-        if acc_test > best_acc:
-            best_acc = acc_test
+        # if acc_test > best_acc:
+        #     best_acc = acc_test
         
-        precision, recall, thresholds = metrics.precision_recall_curve(allParams_test, allPredictions_test)
-        denominator = recall+precision
-        if np.any(np.isclose(denominator,[0.0])):
-            print('\nSome precision+recall were zero. Setting to 1.\n')
-            denominator[np.isclose(denominator,[0.0])] = 1
+        # precision, recall, thresholds = metrics.precision_recall_curve(allParams_test, allPredictions_test)
+        # denominator = recall+precision
+        # if np.any(np.isclose(denominator,[0.0])):
+        #     print('\nSome precision+recall were zero. Setting to 1.\n')
+        #     denominator[np.isclose(denominator,[0.0])] = 1
         
-        f1_scores = 2*recall*precision/(recall+precision)
-        f1_scores[np.isnan(f1_scores)] = 0
-        maxIx = np.argmax(f1_scores)
+        # f1_scores = 2*recall*precision/(recall+precision)
+        # f1_scores[np.isnan(f1_scores)] = 0
+        # maxIx = np.argmax(f1_scores)
 
-        f1_score_test_max = f1_scores[maxIx]
-        thresholdForMax = thresholds[maxIx]
+        # f1_score_test_max = f1_scores[maxIx]
+        # thresholdForMax = thresholds[maxIx]
 
-        acc_test_f1max = metrics.balanced_accuracy_score(allParams_test,(allPredictions_test>thresholdForMax).astype('float'))
-        acc_train_f1max = metrics.balanced_accuracy_score(allParams_train,(allPredictions_train>thresholdForMax).astype('float'))
+        # acc_test_f1max = metrics.balanced_accuracy_score(allParams_test,(allPredictions_test>thresholdForMax).astype('float'))
+        # acc_train_f1max = metrics.balanced_accuracy_score(allParams_train,(allPredictions_train>thresholdForMax).astype('float'))
 
-        acc_test = metrics.balanced_accuracy_score(allParams_test,(allPredictions_test>0.5).astype('float'))
-        acc_train = metrics.balanced_accuracy_score(allParams_train,(allPredictions_train>0.5).astype('float'))
+        # acc_test = metrics.balanced_accuracy_score(allParams_test,(allPredictions_test>0.5).astype('float'))
+        # acc_train = metrics.balanced_accuracy_score(allParams_train,(allPredictions_train>0.5).astype('float'))
 
-        print(f'Weighted Acc at 50% cutoff: {acc_train:.4f} train {acc_test:.4f} test')
+        # print(f'Weighted Acc at 50% cutoff: {acc_train:.4f} train {acc_test:.4f} test')
+        
+        print(f'Train AUC: {auc_train:0.6f} test AUC: {auc_test:0.6f}')
+        print(f'best AUC Test: {best_auc_test:0.4f}')
+
+
+        if logToTensorBoard:
+            writer.add_scalar('AUC/test', auc_test, ep)
+            writer.add_scalar('AUC/train', auc_train, ep)
 
         if logToWandB:
             plt.figure(1)
             fig, ax1 = plt.subplots(1, 2)
 
-            print(f'Train AUC: {auc_train:0.6f} test AUC: {auc_test:0.6f}')
+            # print(f'Train AUC: {auc_train:0.6f} test AUC: {auc_test:0.6f}')
             ax1[0].plot(falsePos_train, truePos_train)
             ax1[0].set_title(f'ROC train, AUC: {auc_train:0.3f}')
             ax1[1].plot(falsePos_test, truePos_test)
@@ -135,20 +158,21 @@ def train(model, trainDataLoader, testDataLoader, numEpoch, optimizer, modelSave
                 'Training Loss': currTrainLoss,
                 'Test Loss': currTestLoss,
                 'auc test': auc_test,
-                'acc test': acc_test,
-                'acc test f1max': acc_test_f1max,
-                'f1 max test': f1_score_test_max,
-                'max f1 threshold': thresholdForMax,
                 'auc train': auc_train,
-                'acc train': acc_train,
-                'acc train f1max': acc_train_f1max,
                 'ROCs individual': plt
             }
             print(f"Log Dict Created and Logging to WandB")
             wandb.log(logDict)
+        
+        if auc_train >= 0.999:
+            print('Training AUC is 1.0')
+            exhausted += 1
+            if exhausted == 3:
+                print(f'Early stopping @ epoch {ep+1} with best AUC test {best_auc_test}')
+                break
 
     print(f"Best AUC Test: {best_auc_test}")
-    return best_auc_test , best_acc
+    return best_auc_test
 
 def loss_bce_kcl(predictedVal,clinicalParam,lossParams):
 	clinicalParam = ((clinicalParam <= lossParams['highThresh']) * (clinicalParam >= lossParams['lowThresh'])).float()
@@ -156,8 +180,8 @@ def loss_bce_kcl(predictedVal,clinicalParam,lossParams):
 
 def evaluate_balanced(network,dataLoaders,lossFun,lossParams,leads,lookForFig=False):
     network.eval()
-    plt.figure(2)
-    fig, ax1 = plt.subplots(8,2, figsize=(4*15, 4*8*2.5))
+    # plt.figure(2)
+    # fig, ax1 = plt.subplots(8,2, figsize=(4*15, 4*8*2.5))
     pltCol = 0
 					
     with torch.no_grad():
@@ -195,7 +219,7 @@ def evaluate_balanced(network,dataLoaders,lossFun,lossParams,leads,lookForFig=Fa
                     print(f'Disagree: {disagree_kcl.item()}, pred: {disagree_pred}.\nAgree: {agree_kcl.item()}, pred: {agree_pred}.')		
         totalDataLoaderLens = [len(d) for d in dataLoaders]
         running_loss = running_loss/sum(totalDataLoaderLens)
-        plt.subplots_adjust(left=0.1, right=0.9, bottom=0.1, top=0.9, wspace=0.2, hspace=0.3)
+        # plt.subplots_adjust(left=0.1, right=0.9, bottom=0.1, top=0.9, wspace=0.2, hspace=0.3)
         plot_margin = 0.25
 
         # x0, x1, y0, y1 = plt.axis()
@@ -205,15 +229,19 @@ def evaluate_balanced(network,dataLoaders,lossFun,lossParams,leads,lookForFig=Fa
         #         y1 + plot_margin))
 
 	
-        return running_loss, allParams, allPredictions, fig
+        return running_loss, allParams, allPredictions, None
 
 
-def trainNetwork_balancedClassification(network, trainDataLoader_normals, trainDataLoader_abnormals, testDataLoader, numEpoch, optimizer, lossFun, lossParams, label, logToWandB, leads):
+def trainNetwork_balancedClassification(network, trainDataLoader_normals, trainDataLoader_abnormals, testDataLoader, numEpoch, optimizer, lossFun, lossParams,leads,modelSaveDir, modelName, logToTensorBoard=False, logToWandB=False):
     print(f"Beginning Training for Network {network.__class__.__name__}")
     prevTrainingLoss = 0.0
+    exhausted = 0
     bestEvalMetric_test = 0.5
     best_acc = 0.5
     maxBatches = max(len(trainDataLoader_normals), len(trainDataLoader_abnormals))
+    if logToTensorBoard:
+        writer = SummaryWriter(log_dir=os.path.join(modelSaveDir,"tensorboard", modelName))
+        loss_meter = AverageMeter()
 
     for ep in range(numEpoch):
         print(f"Epoch {ep+1} of {numEpoch}")
@@ -264,6 +292,10 @@ def trainNetwork_balancedClassification(network, trainDataLoader_normals, trainD
                 lossVal.backward()
                 optimizer.step()
                 running_loss = running_loss + lossVal
+
+                if logToTensorBoard:
+                    loss_meter.update(lossVal.item(), ecg.size(0))
+                    writer.add_scalar('Loss/train', loss_meter.avg, ep*maxBatches+batchIx)
             
         currTrainingLoss = running_loss/(len(trainDataLoader_normals.dataset)+len(trainDataLoader_abnormals.dataset))
 
@@ -272,7 +304,7 @@ def trainNetwork_balancedClassification(network, trainDataLoader_normals, trainD
         print(f"Epoch {ep+1} train loss {currTrainingLoss}, Diff {currTrainingLoss - prevTrainingLoss}")
         prevTrainingLoss = currTrainingLoss
         print('Evaling test')
-        currTestLoss, allParams_test, allPredictions_test, ecgFig = evaluate_balanced(network,[testDataLoader],lossFun,lossParams,leads,lookForFig=True)
+        currTestLoss, allParams_test, allPredictions_test, ecgFig = evaluate_balanced(network,[testDataLoader],lossFun,lossParams,leads,lookForFig=False)
         print('Evaling train')
         currTrainLoss, allParams_train, allPredictions_train, _ = evaluate_balanced(network,[trainDataLoader_normals,trainDataLoader_abnormals],
 																					lossFun,lossParams,leads)
@@ -287,10 +319,10 @@ def trainNetwork_balancedClassification(network, trainDataLoader_normals, trainD
         #convert params to binary
         allParams_train = ((allParams_train <= lossParams['highThresh']) * (allParams_train >= lossParams['lowThresh'])).astype(float)
         allParams_test = ((allParams_test <= lossParams['highThresh']) * (allParams_test >= lossParams['lowThresh'])).astype(float)
-        print(f'For train, {sum(allParams_train)} normals, for test {sum(allParams_test)} normals')
+        #print(f'For train, {sum(allParams_train)} normals, for test {sum(allParams_test)} normals')
 
         #get roc curve and auc
-        print('Calculating ROC and other metrics')
+        #print('Calculating ROC and other metrics')
         falsePos_train, truePos_train, thresholds_train = metrics.roc_curve(allParams_train,allPredictions_train)
         falsePos_test, truePos_test, thresholds_test = metrics.roc_curve(allParams_test,allPredictions_test)
 		
@@ -299,33 +331,43 @@ def trainNetwork_balancedClassification(network, trainDataLoader_normals, trainD
 
         if evalMetric_test > bestEvalMetric_test:
              bestEvalMetric_test = evalMetric_test
-        
-        
-        
-        
-        precision, recall, thresholds = metrics.precision_recall_curve(allParams_test, allPredictions_test)
-        denominator = recall+precision
-        if np.any(np.isclose(denominator,[0.0])):
-            print('\nSome precision+recall were zero. Setting to 1.\n')
-            denominator[np.isclose(denominator,[0.0])] = 1
 
-        f1_scores = 2*recall*precision/(recall+precision)
-        f1_scores[np.isnan(f1_scores)] = 0
-        maxIx = np.argmax(f1_scores)
+             best_model = copy.deepcopy(network.state_dict())
+             os.makedirs(os.path.join(modelSaveDir, modelName[0:2]), exist_ok=True)
+             torch.save(best_model, os.path.join(modelSaveDir,  modelName[0:2], f"{modelName}_best.pth"))
+             print(f"Model saved at {os.path.join(modelSaveDir, modelName[0:2], f'{modelName}_best.pth')} @ Epoch {ep+1} of {numEpoch}")
 
-        f1_score_test_max = f1_scores[maxIx]
-        thresholdForMax = thresholds[maxIx]
-
-        acc_test_f1max = metrics.balanced_accuracy_score(allParams_test,(allPredictions_test>thresholdForMax).astype('float'))
-        acc_train_f1max = metrics.balanced_accuracy_score(allParams_train,(allPredictions_train>thresholdForMax).astype('float'))
-
-        acc_test = metrics.balanced_accuracy_score(allParams_test,(allPredictions_test>0.5).astype('float'))
-        acc_train = metrics.balanced_accuracy_score(allParams_train,(allPredictions_train>0.5).astype('float'))
         
-        if acc_test > best_acc:
-            best_acc = acc_test
+        # precision, recall, thresholds = metrics.precision_recall_curve(allParams_test, allPredictions_test)
+        # denominator = recall+precision
+        # if np.any(np.isclose(denominator,[0.0])):
+        #     print('\nSome precision+recall were zero. Setting to 1.\n')
+        #     denominator[np.isclose(denominator,[0.0])] = 1
+
+        # f1_scores = 2*recall*precision/(recall+precision)
+        # f1_scores[np.isnan(f1_scores)] = 0
+        # maxIx = np.argmax(f1_scores)
+
+        # f1_score_test_max = f1_scores[maxIx]
+        # thresholdForMax = thresholds[maxIx]
+
+        # acc_test_f1max = metrics.balanced_accuracy_score(allParams_test,(allPredictions_test>thresholdForMax).astype('float'))
+        # acc_train_f1max = metrics.balanced_accuracy_score(allParams_train,(allPredictions_train>thresholdForMax).astype('float'))
+
+        # acc_test = metrics.balanced_accuracy_score(allParams_test,(allPredictions_test>0.5).astype('float'))
+        # acc_train = metrics.balanced_accuracy_score(allParams_train,(allPredictions_train>0.5).astype('float'))
         
-        print(f'Weighted Acc at 50% cutoff: {acc_train:.4f} train {acc_test:.4f} test')
+        # if acc_test > best_acc:
+        #     best_acc = acc_test
+        
+        # print(f'Weighted Acc at 50% cutoff: {acc_train:.4f} train {acc_test:.4f} test')
+
+        print(f'train score: {evalMetric_train:0.4f} test score: {evalMetric_test:0.4f}')
+        print(f'best AUC Test: {bestEvalMetric_test:0.4f}')
+
+        if logToTensorBoard:
+            writer.add_scalar('AUC/test', evalMetric_test, ep)
+            writer.add_scalar('AUC/train', evalMetric_train, ep)
 
         if logToWandB:
             print('Logging to wandb')
@@ -345,25 +387,41 @@ def trainNetwork_balancedClassification(network, trainDataLoader_normals, trainD
                  'Training Loss': currTrainingLoss,
                  'Test Loss': currTestLoss,
                  'auc test': evalMetric_test,
-                 'acc test': acc_test,
-                 'acc test f1max': acc_test_f1max,
-                 'f1 max test': f1_score_test_max,
-                 'max f1 threshold': thresholdForMax,
                  'auc train': evalMetric_train,
-                 'acc train': acc_train,
-                 'acc train f1max': acc_train_f1max,
                  'ROCs individual': plt,
-                 'ECGs Examples': ecgFig
+                #  'ECGs Examples': ecgFig
             }
             print(f"Log Dict Created and Logging to WandB")
             wandb.log(logDict)
             plt.close(ecgFig)
+        
+        if evalMetric_train >= 0.999:
+            print('Training AUC is 1.0')
+            exhausted += 1
+            if exhausted == 3:
+                print(f'Early stopping @ epoch {ep+1} with best AUC test {bestEvalMetric_test}')
+                break
 
     print(f"Best AUC Test: {bestEvalMetric_test}")
-    return bestEvalMetric_test, best_acc
+    return bestEvalMetric_test
 
 
+class AverageMeter:
+    """Computes and stores the average and current value"""
+    def __init__(self):
+        self.reset()
 
+    def reset(self):
+        self.val = 0
+        self.avg = 0
+        self.sum = 0
+        self.count = 0
+
+    def update(self, val, n=1):
+        self.val = val
+        self.sum += val * n
+        self.count += n
+        self.avg = self.sum / self.count
 
 
 

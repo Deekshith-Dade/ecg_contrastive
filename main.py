@@ -100,18 +100,26 @@ def main():
                                     allowMismatchTime=False,
                                     randomCrop=True,
                                     )
-    if lead_groupings:
-        assert dataset.__class__.__name__ == "PreTrainECGDatasetLoaderV2"
-    else:
-        assert dataset.__class__.__name__ in  ["PreTrainECGDatasetLoader", "PreTrain_1M_Datasetloader"]
+    
+    assert dataset.__class__.__name__ in  ["PreTrainECGDatasetLoader", "PreTrain_1M_Datasetloader"]
     print(f"Number of ECGs in dataset: {len(dataset)}")
     train_loader = torch.utils.data.DataLoader(
         dataset, batch_size=batch_size, shuffle=True,
         num_workers=32, pin_memory=True, drop_last=True)
     print(f"DataLoader creation time: {time.time() - start} seconds")
 
-    model = Networks.BaselineConvNet(lead_grouping=lead_groupings) if args.arch == "BaselineConvNet" else Networks.ECG_SpatioTemporalNet1D(**parameters.spatioTemporalParams_1D)
+    if not lead_groupings:
+        model = Networks.BaselineConvNet() if args.arch == "BaselineConvNet" else Networks.ECG_SpatioTemporalNet1D(**parameters.spatioTemporalParams_1D)
+    else:
+        lead_groups = [
+            [0,1,6,7],
+            [2,3,4,5]
+        ]
+        model = Networks.ModelGroup(arch=args.arch, parameters=parameters.spatioTemporalParams_1D, lead_groups=lead_groups, classification=False)
+
+    
     optimizer = torch.optim.Adam(model.parameters(), lr, eps=1e-4)
+
 
     if args.pretrained is not None:
         if os.path.exists(args.pretrained):
@@ -135,7 +143,6 @@ def main():
             return
 
     
-    print(model.finalLayer)
     model = torch.nn.DataParallel(model, device_ids=gpuIds)
     model.to(device)
     
