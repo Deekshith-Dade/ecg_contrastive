@@ -6,6 +6,40 @@ import torch
 import pandas as pd
 import time
 
+def dataprepGenetics(args):
+    dataDir = '/usr/sci/cibc/Maprodxn/ClinicalECGData/AllClinicalECGs/pythonData'
+
+    df = pd.read_csv('/usr/sci/cibc/Maprodxn/ClinicalECGData/AllClinicalECGs/GeneticCohort_8_14_2024.csv')
+    
+    patientIds = df['PatId'].to_numpy()
+    geneticResults = df['GeneticResult'].to_numpy()
+    numPatients = patientIds.shape[0]
+
+    train_split_ratio = 0.9
+    num_train = int(numPatients * train_split_ratio)
+    num_val = numPatients - num_train
+
+    patientIndices = list(range(numPatients))
+    random.Random(args.seed).shuffle(patientIndices)
+    
+    train_patient_indices = patientIndices[:num_train]
+    validation_patient_indices = patientIndices[num_train:num_train+num_val]
+
+    train_patients = patientIds[train_patient_indices]
+    train_geneticResults = geneticResults[train_patient_indices]
+
+    validation_patients = patientIds[validation_patient_indices]
+    validation_geneticResults = geneticResults[validation_patient_indices]
+
+    train_dataset = DataTools.ECG_Genetics_Datasetloader(dataDir, train_patients, train_geneticResults, randomCrop=True)
+    validation_dataset = DataTools.ECG_Genetics_Datasetloader(dataDir, validation_patients, validation_geneticResults, randomCrop=True)
+
+    train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True,  num_workers=args.num_workers, pin_memory=True)
+    validation_dataloader = torch.utils.data.DataLoader(validation_dataset, batch_size=args.batch_size, shuffle=False,  num_workers=args.num_workers, pin_memory=True)
+
+
+    return train_dataloader, validation_dataloader
+
 def dataprepKCL(args):
     dataDir = '/usr/sci/cibc/Maprodxn/ClinicalECGData/AllClinicalECGs/'
     normEcgs = False

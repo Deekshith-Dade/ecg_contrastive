@@ -121,7 +121,7 @@ def main():
     epochs = args.epochs
 
     results = {seed: [] for seed in seeds}
-
+    lr = args.lr[0]
     results_file = f"results_{args.task}_{args.pretrained.split('/')[1]}_ep_{args.pretrained.split('/')[2].split('.')[0][-4:]}"
 
     # Logging
@@ -137,7 +137,7 @@ def main():
         logging.info(f"Running with seed {seed}")
         seed_everything(seed)
         if args.task == "LVEF":
-            splitPatientsLVEF(seed)
+            splitPatientsLVEF(43)
         elif args.task == "KCL":
             splitKCLPatients(seed)
         train_loaders, val_loader = dataprepLVEF(args) if args.task == "LVEF" else dataprepKCL(args)
@@ -160,12 +160,13 @@ def main():
             for x in [0,1,2]:
                 print(f"Training on {training_size} ECGs and validation on {len(val_loader.dataset)} ECGs.")
                 if x == 0:
+                    
                     model = create_model(args, baseline=True)
                     lr = args.lr[0]
                     key = f"Baseline"
                     print(f"Training Baseline Model")
-                    
                 elif x == 1:
+                    
                     model = create_model(args, baseline=False, finetune=False)
                     lr = args.lr[1]
                     key = f"PreTrained-Frozen"

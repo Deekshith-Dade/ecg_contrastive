@@ -528,3 +528,54 @@ class ECG_KCL_Datasetloader(Dataset):
 
 	def __len__(self):
 		return len(self.ecgs)
+
+class ECG_Genetics_Datasetloader(Dataset):
+    def __init__(self, dataDir, patientIds, geneticResults, numECGsToFind='all', normalize=False, normMethod='0to1', rhythmType='Rhythm', allowMismatchTime=True, mismatchFix='Pad', randomCrop=False, cropSize=2500, expectedTime=5000):
+        self.ecgs = []
+        self.dataDir = dataDir
+        self.normalize = normalize
+        self.normMethod = normMethod
+        self.rhythmType=rhythmType
+        self.randomCrop = randomCrop
+        self.cropSize = cropSize
+        self.patients = patientIds
+        self.geneticResults = geneticResults
+        self.numECGsToFind = numECGsToFind
+        self.ecgCounts = []
+        self.fileList = []
+        self.geneticVals = []
+        self.accGeneticResults = ["positive", "negative", "uncertain"]
+
+        for i, patient in enumerate(self.patients):
+            if geneticResults[i] in self.accGeneticResults:
+                count = self.findEcgs(str(patient), self.geneticResults[i])
+                self.ecgCounts.append((patient, count))
+
+    
+    def findEcgs(self, patient, geneticResult):
+        patientInfoPath = os.path.join(self.dataDir, patient, 'patientData.json')
+        patientInfo = json.load(open(patientInfoPath))
+        numberOfEcgs = patientInfo['validECGs'] if self.numECGsToFind == 'all' else self.numECGsToFind
+        for ecgIx in range(numberOfEcgs):
+            ecgId = str(patientInfo["validFiles"][ecgIx]).replace('.xml', f'_{self.rhythmType}.npy')
+            self.fileList.append(os.path.join(patient,f'ecg_{ecgIx}',ecgId))
+            self.geneticVals.append(geneticResult)
+        return numberOfEcgs
+
+    
+    def __getitem__(self, item):
+        ecgPath = os.path.join(self.dataDir, self.fileList[item])
+        
+        ecgData = np.load(ecgPath)
+        ecg = torch.tensor(ecgData).float()
+
+        if self.randomCrop:
+            startIx = 0
+            if ecg.shape[-1] > self.cropSize:
+                startIx = torch.randint(ecg.shape[-1]-self.cropSize, (1,))
+            ecg = ecg[..., startIx:startIx+self.cropSize]
+
+        return ecg, self.geneticVals[item]
+
+    def __len__(self):
+        return len(self.fileList)
