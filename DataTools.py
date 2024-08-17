@@ -555,7 +555,7 @@ class ECG_Genetics_Datasetloader(Dataset):
     def findEcgs(self, patient, geneticResult):
         patientInfoPath = os.path.join(self.dataDir, patient, 'patientData.json')
         patientInfo = json.load(open(patientInfoPath))
-        numberOfEcgs = patientInfo['validECGs'] if self.numECGsToFind == 'all' else self.numECGsToFind
+        numberOfEcgs = patientInfo['validECGs'] if self.numECGsToFind == 'all' else int(self.numECGsToFind)
         for ecgIx in range(numberOfEcgs):
             ecgId = str(patientInfo["validFiles"][ecgIx]).replace('.xml', f'_{self.rhythmType}.npy')
             self.fileList.append(os.path.join(patient,f'ecg_{ecgIx}',ecgId))
@@ -575,7 +575,10 @@ class ECG_Genetics_Datasetloader(Dataset):
                 startIx = torch.randint(ecg.shape[-1]-self.cropSize, (1,))
             ecg = ecg[..., startIx:startIx+self.cropSize]
 
-        return ecg, self.geneticVals[item]
+        label = 1.0 if self.geneticVals[item] == 'positive' or self.geneticVals[item] == 'uncertain' else 0.0
+        label = torch.tensor(label).float()
+
+        return ecg, self.geneticVals[item], label
 
     def __len__(self):
         return len(self.fileList)

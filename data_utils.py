@@ -6,7 +6,7 @@ import torch
 import pandas as pd
 import time
 
-def dataprepGenetics(args):
+def dataprepGenetics(args, seed):
     dataDir = '/usr/sci/cibc/Maprodxn/ClinicalECGData/AllClinicalECGs/pythonData'
 
     df = pd.read_csv('/usr/sci/cibc/Maprodxn/ClinicalECGData/AllClinicalECGs/GeneticCohort_8_14_2024.csv')
@@ -20,7 +20,7 @@ def dataprepGenetics(args):
     num_val = numPatients - num_train
 
     patientIndices = list(range(numPatients))
-    random.Random(args.seed).shuffle(patientIndices)
+    random.Random(seed).shuffle(patientIndices)
     
     train_patient_indices = patientIndices[:num_train]
     validation_patient_indices = patientIndices[num_train:num_train+num_val]
@@ -31,8 +31,8 @@ def dataprepGenetics(args):
     validation_patients = patientIds[validation_patient_indices]
     validation_geneticResults = geneticResults[validation_patient_indices]
 
-    train_dataset = DataTools.ECG_Genetics_Datasetloader(dataDir, train_patients, train_geneticResults, randomCrop=True)
-    validation_dataset = DataTools.ECG_Genetics_Datasetloader(dataDir, validation_patients, validation_geneticResults, randomCrop=True)
+    train_dataset = DataTools.ECG_Genetics_Datasetloader(dataDir, train_patients, train_geneticResults, randomCrop=True, numECGsToFind=args.numECGs)
+    validation_dataset = DataTools.ECG_Genetics_Datasetloader(dataDir, validation_patients, validation_geneticResults, randomCrop=True, numECGsToFind=args.numECGs)
 
     train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True,  num_workers=args.num_workers, pin_memory=True)
     validation_dataloader = torch.utils.data.DataLoader(validation_dataset, batch_size=args.batch_size, shuffle=False,  num_workers=args.num_workers, pin_memory=True)
