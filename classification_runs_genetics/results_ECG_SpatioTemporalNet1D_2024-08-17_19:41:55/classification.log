@@ -1,0 +1,2 @@
+INFO:root:args: Namespace(arch='ECG_SpatioTemporalNet1D', batch_size=128, epochs=50, lead_groupings=False, logtowandb=False, lr=5e-05, numECGs='1', num_workers=32, pretrained=None, seeds=[42])
+INFO:root:Running with seed 42
