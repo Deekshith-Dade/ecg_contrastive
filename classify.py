@@ -14,7 +14,7 @@ import parameters
 import json
 import time
 import wandb
-
+import pdb
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 gpuIds = range(torch.cuda.device_count())
@@ -31,7 +31,7 @@ parser.add_argument('--num_workers', default=32, type=int, metavar='N', help='Nu
 parser.add_argument('--lr', default=[1e-3, 0.02, 1e-4], type=float, nargs="+", metavar='N', help='Learning Rate as [lr, fast_lr, slow_lr]')
 parser.add_argument('--arch', default='ECG_SpatioTemporalNet1D', choices=["ECG_SpatioTemporalNet1D", "BaselineConvNet"], type=str, metavar='ARCH', help='Architecture to use')
 parser.add_argument('--logtowandb', default=False, type=bool, metavar='bool', help='Log to wandb')
-parser.add_argument('--lead_groupings', default=False, type=bool, metavar='bool', help='Use lead groupings')
+parser.add_argument('--lead_groupings', action='store_true', help='Use lead groupings')
 #, 0.05, 0.1, 0.5, 1.0
 
 def seed_everything(seed=42):
@@ -157,7 +157,7 @@ def main():
                 "PreTrained-Finetuned": 0
             }}
 
-            for x in [0,1,2]:
+            for x in [2]:
                 print(f"Training on {training_size} ECGs and validation on {len(val_loader.dataset)} ECGs.")
                 if x == 0:
                     
@@ -177,7 +177,7 @@ def main():
                     slow_lr = args.lr[2]
                     key = f"PreTrained-Finetuned"
                     print(f"Training Pretrained Model with Finetuning")
-                
+
                 check = model.model_g1 if args.lead_groupings else model
                 print(f"Requires Grad = {check.conv1.weight.requires_grad if args.arch == 'BaselineConvNet' else check.firstLayer[0].weight.requires_grad}")
                 model = torch.nn.DataParallel(model, device_ids=gpuIds)
@@ -186,15 +186,9 @@ def main():
 
                 optimizer = torch.optim.Adam(model.parameters(), lr=lr)
                 if x == 2:
-                    if args.lead_groupings:
-                        params = [{'params':getattr(model,i).parameters(), 'lr': slow_lr} if i.find("finalLayer")==-1 else {'params':getattr(model,i).parameters(), 'lr': fast_lr} for i,x in model.named_children()]
-                    else:
-                        params = [{'params':getattr(model.model_g1,i).parameters(), 'lr': slow_lr} if i.find("finalLayer")==-1 else {'params':getattr(model.model_g1,i).parameters(), 'lr': fast_lr} for i,x in model.model_g1.named_children()]
-                        params += [{'params':getattr(model.model_g2,i).parameters(), 'lr': slow_lr} if i.find("finalLayer")==-1 else {'params':getattr(model.model_g2,i).parameters(), 'lr': fast_lr} for i,x in model.model_g2.named_children()]
-                        
-                    
+                    params = [{'params':getattr(model,i).parameters(), 'lr': slow_lr} if i.find("finalLayer")==-1 else {'params':getattr(model,i).parameters(), 'lr': fast_lr} for i,x in model.named_children()]
                     optimizer = torch.optim.Adam(params)
-                    
+                
                 if args.logtowandb:
                     wandbrun = wandb.init(
                         project=results_file,

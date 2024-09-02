@@ -14,6 +14,7 @@ import parameters
 import json
 import time
 import wandb
+import pdb
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 gpuIds = range(torch.cuda.device_count())
@@ -24,11 +25,11 @@ parser.add_argument('--pretrained', default=None, type=str, metavar="PATH", help
 parser.add_argument('--batch_size', default=512, type=int, metavar='N', help='Batch size for training')
 parser.add_argument('--epochs', default=50, type=int, metavar='N', help='Number of epochs to train')
 parser.add_argument('--seeds', default=[42, 43, 44, 45, 46], type=int, nargs="+", metavar='N', help='Seeds for reproducibility')
-parser.add_argument('--lr', default=0.0001, type=float, metavar='N', help='Learning rate for training')
+parser.add_argument('--lr', default=[5e-5, 0.2, 1e-5], type=float, nargs="+", metavar='N', help='Learning Rate as [lr, fast_lr, slow_lr]')
 parser.add_argument('--num_workers', default=32, type=int, metavar='N', help='Number of workers for data loading')
 parser.add_argument('--arch', default='ECG_SpatioTemporalNet1D', choices=["ECG_SpatioTemporalNet1D", "BaselineConvNet"], type=str, metavar='ARCH', help='Architecture to use')
 parser.add_argument('--logtowandb', default=False, type=bool, metavar='bool', help='Log to wandb')
-parser.add_argument('--lead_groupings', default=False, type=bool, metavar='bool', help='Use lead groupings')
+parser.add_argument('--lead_groupings', action='store_true', help='Use lead groupings')
 parser.add_argument('--numECGs', default="1", type=str, metavar='N', help='Number of ECGs to use')
 
 def seed_everything(seed=42):
@@ -116,12 +117,13 @@ def main():
     epoch = args.epochs
 
     results = {seed: [] for seed in seeds}
-    lr = args.lr
+    lr = args.lr[0]
     # results_file = f"results_{"Genetics"}_{args.pretrained.split('/')[1]}_ep_{args.pretrained.split('/')[2].split('.')[0][-4:]}"
-    results_file = f"results_{args.arch}_{time.strftime('%Y-%m-%d_%H:%M:%S', time.localtime())}"
+    results_file = f"results_{args.pretrained.split('/')[1]}_ep_{args.pretrained.split('/')[2].split('.')[0][-4:]}_ECGS_{args.numECGs}"
 
     writer = SummaryWriter(log_dir=f"classification_runs_genetics/{results_file}")
     logging.basicConfig(filename=os.path.join(writer.log_dir, 'classification.log'), level=logging.INFO)
+    logging.info(f"Starting Classification for Genetics with {args.pretrained} at {time.ctime()}")
     logging.info(f"args: {args}")
 
     for seed in seeds:
@@ -132,41 +134,64 @@ def main():
         train_loader, val_loader = dataprepGenetics(args, seed)
 
         training_size = len(train_loader.dataset)
-        print(f"Training on {training_size} ECGs and validation on {len(val_loader.dataset)} ECGs.")
-        model = create_model(args, baseline=True)
-        print("Training the baseline Model")
+        logging.info(f"Training on {training_size} ECGs and validation on {len(val_loader.dataset)} ECGs.")
+        for x in [0,1,2]:
+            print(f"Training on {training_size} ECGs and validation on {len(val_loader.dataset)} ECGs.")
+            
+            if x == 0:
+                model = create_model(args, baseline=True)
+                lr = args.lr[0]
+                print("Training the baseline Model")
+                key = "baseline"
+            elif x == 1:
+                model = create_model(args, baseline=False, finetune=False)
+                lr = args.lr[1]
+                key = "PreTrained-Frozen"
+                print("Training the model with frozen weights")
+            elif x == 2:
+                model = create_model(args, baseline=False, finetune=True)
+                fast_lr = args.lr[1]
+                slow_lr = args.lr[2]
+                key = "PreTrained-Finetuned"
+                print("Training the model with Finetuning")
+           
 
-        check = model.model_g1 if args.lead_groupings else model
-        print(f"Requires Grad = {check.conv1.weight.requires_grad if args.arch == 'BaselineConvNet' else check.firstLayer[0].weight.requires_grad}")
-        model = torch.nn.DataParallel(model, device_ids=gpuIds)
-        model.to(device)
+            check = model.model_g1 if args.lead_groupings else model
+            print(f"Requires Grad = {check.conv1.weight.requires_grad if args.arch == 'BaselineConvNet' else check.firstLayer[0].weight.requires_grad}")
+            model = torch.nn.DataParallel(model, device_ids=gpuIds)
+            model.to(device)
 
-        optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+            optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+            if x == 2:
+                    params = [{'params':getattr(model,i).parameters(), 'lr': slow_lr} if i.find("finalLayer")==-1 else {'params':getattr(model,i).parameters(), 'lr': fast_lr} for i,x in model.named_children()]
+                    optimizer = torch.optim.Adam(params)                              
+            
+            # if args.logtowandb:
+            #             wandbrun = wandb.init(
+            #                 project=results_file,
+            #                 notes=f"Seed {seed}, with {training_size} ECGs, {key} model",
+            #                 config = dict(vars(args)),
+            #                 entity="deekshith",
+            #                 reinit=True,
+            #                 name=f"{seed}_{int(args.finetuning_ratios[i]*100)}_perc_{key}"
+            #             )
 
-        # if args.logtowandb:
-        #             wandbrun = wandb.init(
-        #                 project=results_file,
-        #                 notes=f"Seed {seed}, with {training_size} ECGs, {key} model",
-        #                 config = dict(vars(args)),
-        #                 entity="deekshith",
-        #                 reinit=True,
-        #                 name=f"{seed}_{int(args.finetuning_ratios[i]*100)}_perc_{key}"
-        #             )
+            now = time.time()
 
-        now = time.time()
+            print("Training Baseline Model")
+            best_auc_test, best_acc, best_acc_f1max =  Training.trainGenetics(
+                model=model,
+                trainDataLoader=train_loader,
+                testDataLoader=val_loader,
+                numEpoch=epoch,
+                optimizer=optimizer,
+                modelSaveDir=writer.log_dir,
+                modelName=f"{seed}_{args.arch}_model_{key}",
+                logToTensorBoard=True,
+                logToWandB=False
+            )
 
-        print("Training Baseline Model")
-        Training.trainGenetics(
-            model=model,
-            trainDataLoader=train_loader,
-            testDataLoader=val_loader,
-            numEpoch=epoch,
-            optimizer=optimizer,
-            modelSaveDir=writer.log_dir,
-            modelName=f"model_{args.arch}_{seed}",
-            logToTensorBoard=True,
-            logToWandB=False
-        )
+            logging.info(f"For seed {seed}, {key} model best AUC on test set is {best_auc_test}, best accuracy is {best_acc}, best accuracy with f1max is {best_acc_f1max}")
     
 if __name__ == "__main__":
     main()

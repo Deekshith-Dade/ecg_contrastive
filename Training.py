@@ -433,7 +433,9 @@ def trainGenetics(model, trainDataLoader, testDataLoader, numEpoch, optimizer, m
     print(f"Beginning Training for Network {model.__class__.__name__}")
 
     best_auc_test = 0.5
-    best_acc = 0.5
+    best_acc = 0.0
+    best_acc_f1max = 0.0
+
     if logToTensorBoard:
         writer = SummaryWriter(log_dir=os.path.join(modelSaveDir, "tensorboard",modelName))
         loss_meter = AverageMeter()
@@ -517,6 +519,10 @@ def trainGenetics(model, trainDataLoader, testDataLoader, numEpoch, optimizer, m
         acc_test = metrics.balanced_accuracy_score(allParams_test,(allPredictions_test>0.5).astype('float'))
         acc_train = metrics.balanced_accuracy_score(allParams_train,(allPredictions_train>0.5).astype('float'))
 
+        if acc_test > best_acc:
+            best_acc = acc_test
+        if acc_test_f1max > best_acc_f1max:
+            best_acc_f1max = acc_test_f1max
 
         print(f'Train AUC: {auc_train:0.6f} test AUC: {auc_test:0.6f}')
         print(f'best AUC Test: {best_auc_test:0.4f}')
@@ -556,7 +562,7 @@ def trainGenetics(model, trainDataLoader, testDataLoader, numEpoch, optimizer, m
         
 
     print(f"Best AUC Test: {best_auc_test}")
-    return best_auc_test
+    return best_auc_test, best_acc, best_acc_f1max
 
 
 class AverageMeter:
