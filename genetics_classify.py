@@ -135,7 +135,7 @@ def main():
 
         training_size = len(train_loader.dataset)
         logging.info(f"Training on {training_size} ECGs and validation on {len(val_loader.dataset)} ECGs.")
-        for x in [0,1,2]:
+        for x in [0]: # ,1,2
             print(f"Training on {training_size} ECGs and validation on {len(val_loader.dataset)} ECGs.")
             
             if x == 0:

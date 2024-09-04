@@ -501,44 +501,52 @@ def trainGenetics(model, trainDataLoader, testDataLoader, numEpoch, optimizer, m
 
         
         precision, recall, thresholds = metrics.precision_recall_curve(allParams_test, allPredictions_test)
-        denominator = recall+precision
-        if np.any(np.isclose(denominator,[0.0])):
-            print('\nSome precision+recall were zero. Setting to 1.\n')
-            denominator[np.isclose(denominator,[0.0])] = 1
         
-        f1_scores = 2*recall*precision/(recall+precision)
-        f1_scores[np.isnan(f1_scores)] = 0
-        maxIx = np.argmax(f1_scores)
+        desired_recall = 0.95
+        desired_recall_ix = np.argmin(np.abs(recall - desired_recall))
+        threshold = thresholds[desired_recall_ix]
+        
+        
+        confusion_matrix = metrics.confusion_matrix(allParams_test, (allPredictions_test >= threshold).astype('float'))
+        pdb.set_trace()
+        # denominator = recall+precision
+        # if np.any(np.isclose(denominator,[0.0])):
+        #     print('\nSome precision+recall were zero. Setting to 1.\n')
+        #     denominator[np.isclose(denominator,[0.0])] = 1
+        
+        # f1_scores = 2*recall*precision/(recall+precision)
+        # f1_scores[np.isnan(f1_scores)] = 0
+        # maxIx = np.argmax(f1_scores)
 
-        f1_score_test_max = f1_scores[maxIx]
-        thresholdForMax = thresholds[maxIx]
+        # f1_score_test_max = f1_scores[maxIx]
+        # thresholdForMax = thresholds[maxIx]
 
-        acc_test_f1max = metrics.balanced_accuracy_score(allParams_test,(allPredictions_test>thresholdForMax).astype('float'))
-        acc_train_f1max = metrics.balanced_accuracy_score(allParams_train,(allPredictions_train>thresholdForMax).astype('float'))
+        # acc_test_f1max = metrics.balanced_accuracy_score(allParams_test,(allPredictions_test>thresholdForMax).astype('float'))
+        # acc_train_f1max = metrics.balanced_accuracy_score(allParams_train,(allPredictions_train>thresholdForMax).astype('float'))
 
-        acc_test = metrics.balanced_accuracy_score(allParams_test,(allPredictions_test>0.5).astype('float'))
-        acc_train = metrics.balanced_accuracy_score(allParams_train,(allPredictions_train>0.5).astype('float'))
+        # acc_test = metrics.balanced_accuracy_score(allParams_test,(allPredictions_test>0.5).astype('float'))
+        # acc_train = metrics.balanced_accuracy_score(allParams_train,(allPredictions_train>0.5).astype('float'))
 
-        if acc_test > best_acc:
-            best_acc = acc_test
-        if acc_test_f1max > best_acc_f1max:
-            best_acc_f1max = acc_test_f1max
+        # if acc_test > best_acc:
+        #     best_acc = acc_test
+        # if acc_test_f1max > best_acc_f1max:
+        #     best_acc_f1max = acc_test_f1max
 
         print(f'Train AUC: {auc_train:0.6f} test AUC: {auc_test:0.6f}')
         print(f'best AUC Test: {best_auc_test:0.4f}')
-        print(f'F1 test max: {f1_score_test_max:0.4f} at threshold {thresholdForMax:0.4f}')
-        print(f'Acc test f1max: {acc_test_f1max:0.4f} train {acc_train_f1max:0.4f}')
-        print(f'Acc test: {acc_test:0.4f} train {acc_train:0.4f}') 
+        # print(f'F1 test max: {f1_score_test_max:0.4f} at threshold {thresholdForMax:0.4f}')
+        # print(f'Acc test f1max: {acc_test_f1max:0.4f} train {acc_train_f1max:0.4f}')
+        # print(f'Acc test: {acc_test:0.4f} train {acc_train:0.4f}') 
 
         if logToTensorBoard:
             writer.add_scalar('AUC/test', auc_test, ep)
             writer.add_scalar('AUC/train', auc_train, ep)
-            writer.add_scalar('F1/test', f1_score_test_max, ep)
-            writer.add_scalar('F1/test_threshold', thresholdForMax, ep)
-            writer.add_scalar('Acc/test_f1max', acc_test_f1max, ep)
-            writer.add_scalar('Acc/train_f1max', acc_train_f1max, ep)
-            writer.add_scalar('Acc/test', acc_test, ep)
-            writer.add_scalar('Acc/train', acc_train, ep)
+            # writer.add_scalar('F1/test', f1_score_test_max, ep)
+            # writer.add_scalar('F1/test_threshold', thresholdForMax, ep)
+            # writer.add_scalar('Acc/test_f1max', acc_test_f1max, ep)
+            # writer.add_scalar('Acc/train_f1max', acc_train_f1max, ep)
+            # writer.add_scalar('Acc/test', acc_test, ep)
+            # writer.add_scalar('Acc/train', acc_train, ep)
 
         if logToWandB:
             plt.figure(1)
