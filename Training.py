@@ -243,6 +243,19 @@ def trainNetwork_balancedClassification(network, trainDataLoader_normals, trainD
     if logToTensorBoard:
         writer = SummaryWriter(log_dir=os.path.join(modelSaveDir,"tensorboard", modelName))
         loss_meter = AverageMeter()
+        
+        layout = {
+            "Training Metrics": {
+                "Loss": ["Multiline", ["Loss/train"]],
+                "Curr Loss": ["Multiline", ["CurrLoss/train", "CurrLoss/test"]],
+            },
+            "Evaluation Metrics": {
+                "Specificity @ 95": ["Multiline", ["spec95/TNR", "spec95/TNR", "spec95/PPV", "spec95/NPV", "spec95/FPR", "spec95/FNR", "spec95/FDR", "spec95/ACC"]],
+                "Sensitivity @ 95": ["Multiline", ["sens95/TNR", "sens95/TNR", "sens95/PPV", "sens95/NPV", "sens95/FPR", "sens95/FNR", "sens95/FDR", "sens95/ACC"]],
+            }
+        }
+        
+        writer.add_custom_scalars(layout)
 
     for ep in range(numEpoch):
         print(f"Epoch {ep+1} of {numEpoch}")
@@ -310,6 +323,9 @@ def trainNetwork_balancedClassification(network, trainDataLoader_normals, trainD
         currTrainLoss, allParams_train, allPredictions_train, _ = evaluate_balanced(network,[trainDataLoader_normals,trainDataLoader_abnormals],
 																					lossFun,lossParams,leads)
         print(f"train loss: {currTrainLoss}, val loss: {currTestLoss}")
+        if logToTensorBoard:
+            writer.add_scalar('CurrLoss/train', currTrainingLoss, ep)
+            writer.add_scalar('CurrLoss/test', currTestLoss, ep)
 
         #process results
         allParams_train = allParams_train.clone().detach().cpu().numpy()
@@ -418,12 +434,14 @@ def evaluateGenetics(model, dataloader, lossFun):
         allNoiseVals = np.empty((0, 8))
 
         for ecg, clinicalParam, label in dataloader:
+            pdb.set_trace()
+            
             ecg = ecg.to(device)
             label = label.to(device).unsqueeze(1)
             predictedVal = model(ecg)
             lossVal = lossFun(predictedVal, label)
             running_loss += lossVal.item()
-            allParams = torch.cat((allParams, label.squeeze()))
+            allParams = torch.cat((allParams, label.squeeze(1)))
             allPredictions = torch.cat((allPredictions, predictedVal.squeeze()))
 
         running_loss = running_loss/len(dataloader)
@@ -474,6 +492,7 @@ def trainGenetics(model, trainDataLoader, testDataLoader, numEpoch, optimizer, m
         print(f"Batch Loss: {batch_total_loss}")
 
         print('Evalving Test')
+    
         currTestLoss, allParams_test, allPredictions_test, _ = evaluateGenetics(model, testDataLoader, loss_bce_genetics)
 
         print('Evalving Train')
@@ -487,9 +506,50 @@ def trainGenetics(model, trainDataLoader, testDataLoader, numEpoch, optimizer, m
         allPredictions_test = allPredictions_test.clone().detach().cpu().numpy()
 
         falsePos_train, truePos_train, _ = metrics.roc_curve(allParams_train, allPredictions_train)
-        falsePos_test, truePos_test, _ = metrics.roc_curve(allParams_test, allPredictions_test)
+        falsePos_test, truePos_test, thresholds = metrics.roc_curve(allParams_test, allPredictions_test)
         auc_train = metrics.roc_auc_score(allParams_train, allPredictions_train)
         auc_test = metrics.roc_auc_score(allParams_test, allPredictions_test)
+        
+        specificities = 1-falsePos_test
+        
+        desired_sensitivity = 0.95
+        sensitivity_index = np.argmin(np.abs(truePos_test - desired_sensitivity))
+        sensitivity_threshold = thresholds[sensitivity_index]
+
+        # Find the threshold closest to the desired specificity (95%)
+        desired_specificity = 0.95
+        specificity_index = np.argmin(np.abs(specificities - desired_specificity))
+        specificity_threshold = thresholds[specificity_index]
+
+        print(f"Threshold for Sensitivity ~95%: {sensitivity_threshold}")
+        print(f"Threshold for Specificity ~95%: {specificity_threshold}")
+        
+        confusion_matrix_sens_95 = metrics.confusion_matrix(allParams_test, (allPredictions_test >= sensitivity_threshold).astype('float'))
+        confusion_matrix_spec_95 = metrics.confusion_matrix(allParams_test, (allPredictions_test >= specificity_threshold).astype('float'))
+        
+        TPR, TNR, PPV, NPV, FPR, FNR, FDR, ACC = metrics_from_conf_matrix(confusion_matrix_sens_95)
+        if logToTensorBoard:
+            writer.add_scalar('sens95/TNR', TPR, ep)
+            writer.add_scalar('sens95/TNR', TNR, ep)
+            writer.add_scalar('sens95/PPV', PPV, ep)
+            writer.add_scalar('sens95/NPV', NPV, ep)
+            writer.add_scalar('sens95/FPR', FPR, ep)
+            writer.add_scalar('sens95/FNR', FNR, ep)
+            writer.add_scalar('sens95/FDR', FDR, ep)
+            writer.add_scalar('sens95/ACC', ACC, ep)
+        TPR, TNR, PPV, NPV, FPR, FNR, FDR, ACC = metrics_from_conf_matrix(confusion_matrix_spec_95)
+        if logToTensorBoard:
+            writer.add_scalar('spec95/TNR', TPR, ep)
+            writer.add_scalar('spec95/TNR', TNR, ep)
+            writer.add_scalar('spec95/PPV', PPV, ep)
+            writer.add_scalar('spec95/NPV', NPV, ep)
+            writer.add_scalar('spec95/FPR', FPR, ep)
+            writer.add_scalar('spec95/FNR', FNR, ep)
+            writer.add_scalar('spec95/FDR', FDR, ep)
+            writer.add_scalar('spec95/ACC', ACC, ep)
+            
+            
+        # pdb.set_trace()
 
         if auc_test > best_auc_test:
             best_auc_test = auc_test
@@ -500,15 +560,7 @@ def trainGenetics(model, trainDataLoader, testDataLoader, numEpoch, optimizer, m
             print(f"Model saved at {os.path.join(modelSaveDir, modelName[0:2] ,f'{modelName}_best.pth')} @ Epoch {ep+1} of {numEpoch}")
 
         
-        precision, recall, thresholds = metrics.precision_recall_curve(allParams_test, allPredictions_test)
         
-        desired_recall = 0.95
-        desired_recall_ix = np.argmin(np.abs(recall - desired_recall))
-        threshold = thresholds[desired_recall_ix]
-        
-        
-        confusion_matrix = metrics.confusion_matrix(allParams_test, (allPredictions_test >= threshold).astype('float'))
-        pdb.set_trace()
         # denominator = recall+precision
         # if np.any(np.isclose(denominator,[0.0])):
         #     print('\nSome precision+recall were zero. Setting to 1.\n')
@@ -572,6 +624,36 @@ def trainGenetics(model, trainDataLoader, testDataLoader, numEpoch, optimizer, m
     print(f"Best AUC Test: {best_auc_test}")
     return best_auc_test, best_acc, best_acc_f1max
 
+def metrics_from_conf_matrix(confusion_matrix):
+    # Compute the metrics from the confusion matrix
+    # True Positives
+    TP = confusion_matrix[1, 1]
+    # True Negatives
+    TN = confusion_matrix[0, 0]
+    # False Positives
+    FP = confusion_matrix[0, 1]
+    # False Negatives
+    FN = confusion_matrix[1, 0]
+
+    # Sensitivity, hit rate, recall, or true positive rate
+    TPR = TP / (TP + FN)
+    # Specificity or true negative rate
+    TNR = TN / (TN + FP)
+    # Precision or positive predictive value
+    PPV = TP / (TP + FP)
+    # Negative predictive value
+    NPV = TN / (TN + FN)
+    # Fall out or false positive rate
+    FPR = FP / (FP + TN)
+    # False negative rate
+    FNR = FN / (TP + FN)
+    # False discovery rate
+    FDR = FP / (TP + FP)
+
+    # Overall accuracy
+    ACC = (TP + TN) / (TP + FP + FN + TN)
+
+    return TPR, TNR, PPV, NPV, FPR, FNR, FDR, ACC
 
 class AverageMeter:
     """Computes and stores the average and current value"""

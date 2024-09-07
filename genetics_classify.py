@@ -23,9 +23,9 @@ os.environ["WANDB_API_KEY"] = "e56acefffc20a7f826010f436f392b067f4e0ae5"
 parser = argparse.ArgumentParser(description='Classification for Genetic Results')
 parser.add_argument('--pretrained', default=None, type=str, metavar="PATH", help='Path to pretrained model')
 parser.add_argument('--batch_size', default=512, type=int, metavar='N', help='Batch size for training')
-parser.add_argument('--epochs', default=50, type=int, metavar='N', help='Number of epochs to train')
+parser.add_argument('--epochs', default=100, type=int, metavar='N', help='Number of epochs to train')
 parser.add_argument('--seeds', default=[42, 43, 44, 45, 46], type=int, nargs="+", metavar='N', help='Seeds for reproducibility')
-parser.add_argument('--lr', default=[5e-5, 0.2, 1e-5], type=float, nargs="+", metavar='N', help='Learning Rate as [lr, fast_lr, slow_lr]')
+parser.add_argument('--lr', default=[1e-4, 0.02, 1e-3], type=float, nargs="+", metavar='N', help='Learning Rate as [lr, fast_lr, slow_lr]')
 parser.add_argument('--num_workers', default=32, type=int, metavar='N', help='Number of workers for data loading')
 parser.add_argument('--arch', default='ECG_SpatioTemporalNet1D', choices=["ECG_SpatioTemporalNet1D", "BaselineConvNet"], type=str, metavar='ARCH', help='Architecture to use')
 parser.add_argument('--logtowandb', default=False, type=bool, metavar='bool', help='Log to wandb')
@@ -135,7 +135,7 @@ def main():
 
         training_size = len(train_loader.dataset)
         logging.info(f"Training on {training_size} ECGs and validation on {len(val_loader.dataset)} ECGs.")
-        for x in [0]: # ,1,2
+        for x in [0,1,2]:
             print(f"Training on {training_size} ECGs and validation on {len(val_loader.dataset)} ECGs.")
             
             if x == 0:
@@ -191,7 +191,7 @@ def main():
                 logToWandB=False
             )
 
-            logging.info(f"For seed {seed}, {key} model best AUC on test set is {best_auc_test}, best accuracy is {best_acc}, best accuracy with f1max is {best_acc_f1max}")
+            logging.info(f"For seed {seed}, {key} model best AUC on test set is {best_auc_test}")
     
 if __name__ == "__main__":
     main()
