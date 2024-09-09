@@ -4,7 +4,7 @@ import numpy as np
 from sklearn import metrics
 import matplotlib.pyplot as plt
 from torch.utils.tensorboard import SummaryWriter
-
+import datetime
 import wandb
 import copy
 import os
@@ -246,8 +246,7 @@ def trainNetwork_balancedClassification(network, trainDataLoader_normals, trainD
         
         layout = {
             "Training Metrics": {
-                "Loss": ["Multiline", ["Loss/train"]],
-                "Curr Loss": ["Multiline", ["CurrLoss/train", "CurrLoss/test"]],
+                "Loss": ["Multiline", ["Loss/train", "Loss/CurrTrainLoss", "Loss/CurrTestLoss"]],
             },
             "Evaluation Metrics": {
                 "Specificity @ 95": ["Multiline", ["spec95/TNR", "spec95/TNR", "spec95/PPV", "spec95/NPV", "spec95/FPR", "spec95/FNR", "spec95/FDR", "spec95/ACC"]],
@@ -324,8 +323,8 @@ def trainNetwork_balancedClassification(network, trainDataLoader_normals, trainD
 																					lossFun,lossParams,leads)
         print(f"train loss: {currTrainLoss}, val loss: {currTestLoss}")
         if logToTensorBoard:
-            writer.add_scalar('CurrLoss/train', currTrainingLoss, ep)
-            writer.add_scalar('CurrLoss/test', currTestLoss, ep)
+            writer.add_scalar('Loss/CurrTrainLoss', currTrainingLoss, ep)
+            writer.add_scalar('Loss/CurrTestLoss', currTestLoss, ep)
 
         #process results
         allParams_train = allParams_train.clone().detach().cpu().numpy()
@@ -434,7 +433,6 @@ def evaluateGenetics(model, dataloader, lossFun):
         allNoiseVals = np.empty((0, 8))
 
         for ecg, clinicalParam, label in dataloader:
-            pdb.set_trace()
             
             ecg = ecg.to(device)
             label = label.to(device).unsqueeze(1)
@@ -442,7 +440,7 @@ def evaluateGenetics(model, dataloader, lossFun):
             lossVal = lossFun(predictedVal, label)
             running_loss += lossVal.item()
             allParams = torch.cat((allParams, label.squeeze(1)))
-            allPredictions = torch.cat((allPredictions, predictedVal.squeeze()))
+            allPredictions = torch.cat((allPredictions, predictedVal.squeeze(1)))
 
         running_loss = running_loss/len(dataloader)
     return running_loss, allParams, allPredictions, allNoiseVals
@@ -453,9 +451,9 @@ def trainGenetics(model, trainDataLoader, testDataLoader, numEpoch, optimizer, m
     best_auc_test = 0.5
     best_acc = 0.0
     best_acc_f1max = 0.0
-
+    date = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     if logToTensorBoard:
-        writer = SummaryWriter(log_dir=os.path.join(modelSaveDir, "tensorboard",modelName))
+        writer = SummaryWriter(log_dir=os.path.join(modelSaveDir, f"tensorboard/{date}",modelName))
         loss_meter = AverageMeter()
 
     for ep in range(numEpoch):
@@ -531,25 +529,27 @@ def trainGenetics(model, trainDataLoader, testDataLoader, numEpoch, optimizer, m
         if logToTensorBoard:
             writer.add_scalar('sens95/TNR', TPR, ep)
             writer.add_scalar('sens95/TNR', TNR, ep)
-            writer.add_scalar('sens95/PPV', PPV, ep)
-            writer.add_scalar('sens95/NPV', NPV, ep)
             writer.add_scalar('sens95/FPR', FPR, ep)
             writer.add_scalar('sens95/FNR', FNR, ep)
+            writer.add_scalar('sens95/PPV', PPV, ep)
+            writer.add_scalar('sens95/NPV', NPV, ep)
+            
             writer.add_scalar('sens95/FDR', FDR, ep)
             writer.add_scalar('sens95/ACC', ACC, ep)
         TPR, TNR, PPV, NPV, FPR, FNR, FDR, ACC = metrics_from_conf_matrix(confusion_matrix_spec_95)
         if logToTensorBoard:
             writer.add_scalar('spec95/TNR', TPR, ep)
             writer.add_scalar('spec95/TNR', TNR, ep)
-            writer.add_scalar('spec95/PPV', PPV, ep)
-            writer.add_scalar('spec95/NPV', NPV, ep)
             writer.add_scalar('spec95/FPR', FPR, ep)
             writer.add_scalar('spec95/FNR', FNR, ep)
+            writer.add_scalar('spec95/PPV', PPV, ep)
+            writer.add_scalar('spec95/NPV', NPV, ep)
+            
             writer.add_scalar('spec95/FDR', FDR, ep)
             writer.add_scalar('spec95/ACC', ACC, ep)
             
             
-        # pdb.set_trace()
+        
 
         if auc_test > best_auc_test:
             best_auc_test = auc_test
@@ -634,21 +634,26 @@ def metrics_from_conf_matrix(confusion_matrix):
     FP = confusion_matrix[0, 1]
     # False Negatives
     FN = confusion_matrix[1, 0]
+    
+    def safe_divide(a, b):
+        if b == 0:
+            return 0
+        return a / b
 
     # Sensitivity, hit rate, recall, or true positive rate
-    TPR = TP / (TP + FN)
+    TPR = safe_divide(TP, (TP + FN)) # TP / (TP + FN)
     # Specificity or true negative rate
-    TNR = TN / (TN + FP)
+    TNR = safe_divide(TN, (TN + FP)) # TN / (TN + FP)
     # Precision or positive predictive value
-    PPV = TP / (TP + FP)
+    PPV = safe_divide(TP, (TP + FP)) # TP / (TP + FP)
     # Negative predictive value
-    NPV = TN / (TN + FN)
+    NPV = safe_divide(TN, (TN + FN)) # TN / (TN + FN)
     # Fall out or false positive rate
-    FPR = FP / (FP + TN)
+    FPR = safe_divide(FP, (FP + TN)) # FP / (FP + TN)
     # False negative rate
-    FNR = FN / (TP + FN)
+    FNR = safe_divide(FN, (TP + FN)) # FN / (TP + FN)
     # False discovery rate
-    FDR = FP / (TP + FP)
+    FDR = safe_divide(FP, (TP + FP)) # FP / (TP + FP)
 
     # Overall accuracy
     ACC = (TP + TN) / (TP + FP + FN + TN)
