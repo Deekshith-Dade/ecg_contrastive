@@ -9,6 +9,7 @@ import wandb
 import copy
 import os
 import pdb
+import math
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -244,17 +245,7 @@ def trainNetwork_balancedClassification(network, trainDataLoader_normals, trainD
         writer = SummaryWriter(log_dir=os.path.join(modelSaveDir,"tensorboard", modelName))
         loss_meter = AverageMeter()
         
-        layout = {
-            "Training Metrics": {
-                "Loss": ["Multiline", ["Loss/train", "Loss/CurrTrainLoss", "Loss/CurrTestLoss"]],
-            },
-            "Evaluation Metrics": {
-                "Specificity @ 95": ["Multiline", ["spec95/TNR", "spec95/TNR", "spec95/PPV", "spec95/NPV", "spec95/FPR", "spec95/FNR", "spec95/FDR", "spec95/ACC"]],
-                "Sensitivity @ 95": ["Multiline", ["sens95/TNR", "sens95/TNR", "sens95/PPV", "sens95/NPV", "sens95/FPR", "sens95/FNR", "sens95/FDR", "sens95/ACC"]],
-            }
-        }
         
-        writer.add_custom_scalars(layout)
 
     for ep in range(numEpoch):
         print(f"Epoch {ep+1} of {numEpoch}")
@@ -322,9 +313,7 @@ def trainNetwork_balancedClassification(network, trainDataLoader_normals, trainD
         currTrainLoss, allParams_train, allPredictions_train, _ = evaluate_balanced(network,[trainDataLoader_normals,trainDataLoader_abnormals],
 																					lossFun,lossParams,leads)
         print(f"train loss: {currTrainLoss}, val loss: {currTestLoss}")
-        if logToTensorBoard:
-            writer.add_scalar('Loss/CurrTrainLoss', currTrainingLoss, ep)
-            writer.add_scalar('Loss/CurrTestLoss', currTestLoss, ep)
+        
 
         #process results
         allParams_train = allParams_train.clone().detach().cpu().numpy()
@@ -445,17 +434,30 @@ def evaluateGenetics(model, dataloader, lossFun):
         running_loss = running_loss/len(dataloader)
     return running_loss, allParams, allPredictions, allNoiseVals
 
-def trainGenetics(model, trainDataLoader, testDataLoader, numEpoch, optimizer, modelSaveDir, modelName, logToTensorBoard, logToWandB=False):
+def trainGenetics(model, trainDataLoader, testDataLoader, numEpoch, optimizer, modelSaveDir,date, modelName, logToTensorBoard, logToWandB=False):
     print(f"Beginning Training for Network {model.__class__.__name__}")
 
     best_auc_test = 0.5
     best_acc = 0.0
     best_acc_f1max = 0.0
-    date = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    
     if logToTensorBoard:
         writer = SummaryWriter(log_dir=os.path.join(modelSaveDir, f"tensorboard/{date}",modelName))
         loss_meter = AverageMeter()
 
+        layout = {
+            "Training Metrics": {
+                "Loss": ["Multiline", ["Loss/train", "Loss/CurrTrainLoss", "Loss/CurrTestLoss"]],
+                "Norm": ["Multiline", ["Norm/norm", "Norm/clipped_norm_after"]],
+            },
+            "Evaluation Metrics": {
+                "Specificity @ 95": ["Multiline", ["spec95/TPR", "spec95/TNR", "spec95/FPR", "spec95/FNR", "spec95/PPV", "spec95/NPV", "spec95/FDR", "spec95/ACC"]],
+                "Sensitivity @ 95": ["Multiline", ["sens95/TPR", "sens95/TNR", "sens95/FPR", "sens95/FNR", "sens95/PPV", "sens95/NPV", "sens95/FDR", "sens95/ACC"]],
+            }
+        }
+        
+        writer.add_custom_scalars(layout)
+        
     for ep in range(numEpoch):
         print(f"Epoch {ep+1} of {numEpoch}")
 
@@ -479,11 +481,19 @@ def trainGenetics(model, trainDataLoader, testDataLoader, numEpoch, optimizer, m
                 running_loss += loss.item()
 
                 loss.backward()
+                norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                
+                clipped_norm_after = math.sqrt(sum(p.grad.norm(2).item() ** 2 for p in model.parameters() if p.grad is not None))
+
+                
                 optimizer.step()
 
                 if logToTensorBoard:
                     loss_meter.update(loss.item(), ecg.size(0))
                     writer.add_scalar('Loss/train', loss_meter.avg, ep*len(trainDataLoader)+count)
+                    
+                    writer.add_scalar('Norm/norm', norm, ep*len(trainDataLoader)+count)
+                    writer.add_scalar('Norm/clipped_norm_after', clipped_norm_after, ep*len(trainDataLoader)+count)
 
         batch_total_loss = running_loss / len(trainDataLoader)
         print()
@@ -496,6 +506,9 @@ def trainGenetics(model, trainDataLoader, testDataLoader, numEpoch, optimizer, m
         print('Evalving Train')
         currTrainLoss, allParams_train, allPredictions_train, _ = evaluateGenetics(model, trainDataLoader, loss_bce_genetics)
         print(f"Train Loss: {currTrainLoss} \n Test Loss: {currTestLoss}")
+        if logToTensorBoard:
+            writer.add_scalar('Loss/CurrTrainLoss', currTrainLoss, ep)
+            writer.add_scalar('Loss/CurrTestLoss', currTestLoss, ep)
 
         allParams_train = allParams_train.clone().detach().cpu().numpy()
         allPredictions_train = allPredictions_train.clone().detach().cpu().numpy()
@@ -519,18 +532,19 @@ def trainGenetics(model, trainDataLoader, testDataLoader, numEpoch, optimizer, m
         specificity_index = np.argmin(np.abs(specificities - desired_specificity))
         specificity_threshold = thresholds[specificity_index]
 
-        print(f"Threshold for Sensitivity ~95%: {sensitivity_threshold}")
-        print(f"Threshold for Specificity ~95%: {specificity_threshold}")
+        # print(f"Threshold for Sensitivity ~95%: {sensitivity_threshold}")
+        # print(f"Threshold for Specificity ~95%: {specificity_threshold}")
         
         confusion_matrix_sens_95 = metrics.confusion_matrix(allParams_test, (allPredictions_test >= sensitivity_threshold).astype('float'))
         confusion_matrix_spec_95 = metrics.confusion_matrix(allParams_test, (allPredictions_test >= specificity_threshold).astype('float'))
         
         TPR, TNR, PPV, NPV, FPR, FNR, FDR, ACC = metrics_from_conf_matrix(confusion_matrix_sens_95)
         if logToTensorBoard:
-            writer.add_scalar('sens95/TNR', TPR, ep)
+            writer.add_scalar('sens95/TPR', TPR, ep)
             writer.add_scalar('sens95/TNR', TNR, ep)
             writer.add_scalar('sens95/FPR', FPR, ep)
             writer.add_scalar('sens95/FNR', FNR, ep)
+            
             writer.add_scalar('sens95/PPV', PPV, ep)
             writer.add_scalar('sens95/NPV', NPV, ep)
             
@@ -538,10 +552,11 @@ def trainGenetics(model, trainDataLoader, testDataLoader, numEpoch, optimizer, m
             writer.add_scalar('sens95/ACC', ACC, ep)
         TPR, TNR, PPV, NPV, FPR, FNR, FDR, ACC = metrics_from_conf_matrix(confusion_matrix_spec_95)
         if logToTensorBoard:
-            writer.add_scalar('spec95/TNR', TPR, ep)
+            writer.add_scalar('spec95/TPR', TPR, ep)
             writer.add_scalar('spec95/TNR', TNR, ep)
             writer.add_scalar('spec95/FPR', FPR, ep)
             writer.add_scalar('spec95/FNR', FNR, ep)
+            
             writer.add_scalar('spec95/PPV', PPV, ep)
             writer.add_scalar('spec95/NPV', NPV, ep)
             

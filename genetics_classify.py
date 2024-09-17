@@ -8,12 +8,13 @@ import Networks
 import Training
 from data_utils import dataprepGenetics
 import os
+import datetime
 
 from torch.utils.tensorboard import SummaryWriter
 import parameters
 import json
 import time
-import wandb
+# import wandb
 import pdb
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -25,7 +26,7 @@ parser.add_argument('--pretrained', default=None, type=str, metavar="PATH", help
 parser.add_argument('--batch_size', default=512, type=int, metavar='N', help='Batch size for training')
 parser.add_argument('--epochs', default=100, type=int, metavar='N', help='Number of epochs to train')
 parser.add_argument('--seeds', default=[42, 43, 44, 45, 46], type=int, nargs="+", metavar='N', help='Seeds for reproducibility')
-parser.add_argument('--lr', default=[1e-4, 0.02, 1e-3], type=float, nargs="+", metavar='N', help='Learning Rate as [lr, fast_lr, slow_lr]')
+parser.add_argument('--lr', default=[3e-4, 0.02, 1e-4], type=float, nargs="+", metavar='N', help='Learning Rate as [lr, fast_lr, slow_lr]')
 parser.add_argument('--num_workers', default=32, type=int, metavar='N', help='Number of workers for data loading')
 parser.add_argument('--arch', default='ECG_SpatioTemporalNet1D', choices=["ECG_SpatioTemporalNet1D", "BaselineConvNet"], type=str, metavar='ARCH', help='Architecture to use')
 parser.add_argument('--logtowandb', default=False, type=bool, metavar='bool', help='Log to wandb')
@@ -111,11 +112,43 @@ def create_model(args, baseline, finetune=False):
     
     return model
 
+def get_data_distribution(train_loader, val_loader):
+        output = []
+        positive = 0
+        negative = 0
+        uncertain = 0
+        for ecgs, genetics, labels in val_loader:
+
+            for i in range(len(genetics)):
+                if genetics[i] == "positive":
+                    positive += 1
+                elif genetics[i] == "negative":
+                    negative += 1
+                elif genetics[i] == "uncertain":
+                    uncertain += 1
+        output.append(f"Validation => Positive: {positive}, Negative: {negative}, Uncertain: {uncertain} and that is {(positive + uncertain) * 100/ (positive + negative + uncertain):0.4f}% positive class")
+
+        positive = 0
+        negative = 0
+        uncertain = 0
+        for ecgs, genetics, labels in train_loader:
+
+            for i in range(len(genetics)):
+                if genetics[i] == "positive":
+                    positive += 1
+                elif genetics[i] == "negative":
+                    negative += 1
+                elif genetics[i] == "uncertain":
+                    uncertain += 1
+        output.append(f"Training => Positive: {positive}, Negative: {negative}, Uncertain: {uncertain} and that is {(positive + uncertain) * 100/ (positive + negative + uncertain):0.4f}% positive class")
+        
+        return output
+
 def main():
     args = parser.parse_args()
     seeds = args.seeds
     epoch = args.epochs
-
+    date = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     results = {seed: [] for seed in seeds}
     lr = args.lr[0]
     # results_file = f"results_{"Genetics"}_{args.pretrained.split('/')[1]}_ep_{args.pretrained.split('/')[2].split('.')[0][-4:]}"
@@ -132,7 +165,9 @@ def main():
         seed_everything(seed)
 
         train_loader, val_loader = dataprepGenetics(args, seed)
-
+        output = get_data_distribution(train_loader, val_loader)
+        for line in output:
+            logging.info(line)
         training_size = len(train_loader.dataset)
         logging.info(f"Training on {training_size} ECGs and validation on {len(val_loader.dataset)} ECGs.")
         for x in [0,1,2]:
@@ -160,11 +195,11 @@ def main():
             print(f"Requires Grad = {check.conv1.weight.requires_grad if args.arch == 'BaselineConvNet' else check.firstLayer[0].weight.requires_grad}")
             model = torch.nn.DataParallel(model, device_ids=gpuIds)
             model.to(device)
-
-            optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+            weight_decay = 0.01
+            optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
             if x == 2:
                     params = [{'params':getattr(model,i).parameters(), 'lr': slow_lr} if i.find("finalLayer")==-1 else {'params':getattr(model,i).parameters(), 'lr': fast_lr} for i,x in model.named_children()]
-                    optimizer = torch.optim.Adam(params)                              
+                    optimizer = torch.optim.AdamW(params, weight_decay=weight_decay)                              
             
             # if args.logtowandb:
             #             wandbrun = wandb.init(
@@ -186,6 +221,7 @@ def main():
                 numEpoch=epoch,
                 optimizer=optimizer,
                 modelSaveDir=writer.log_dir,
+                date=date,
                 modelName=f"{seed}_{args.arch}_model_{key}",
                 logToTensorBoard=True,
                 logToWandB=False
