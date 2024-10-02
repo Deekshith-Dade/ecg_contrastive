@@ -32,6 +32,7 @@ parser.add_argument('--lr', default=[1e-3, 0.02, 1e-4], type=float, nargs="+", m
 parser.add_argument('--arch', default='ECG_SpatioTemporalNet1D', choices=["ECG_SpatioTemporalNet1D", "BaselineConvNet"], type=str, metavar='ARCH', help='Architecture to use')
 parser.add_argument('--logtowandb', default=False, type=bool, metavar='bool', help='Log to wandb')
 parser.add_argument('--lead_groupings', action='store_true', help='Use lead groupings')
+parser.add_argument('--augmentation', action='store_true', help='Augment data')
 #, 0.05, 0.1, 0.5, 1.0
 
 def seed_everything(seed=42):
@@ -124,11 +125,13 @@ def main():
     lr = args.lr[0]
     results_file = f"results_{args.task}_{args.pretrained.split('/')[1]}_ep_{args.pretrained.split('/')[2].split('.')[0][-4:]}"
 
+    datetime = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+    
     # Logging
     writer = SummaryWriter(log_dir=f"classification_runs/{results_file}")
     logging.basicConfig(filename=os.path.join(writer.log_dir, 'classification.log'), level=logging.INFO)
     print(f"Logging has been saved at {writer.log_dir}.")
-    logging.info(f"Pretraining with the file {args.pretrained} on {args.task} task with model {args.arch}.")
+    logging.info(f"Pretraining with the file {args.pretrained} on {args.task} task with model {args.arch} @ {datetime}.")
     logging.info(f"args: {args}")
 
 
@@ -157,7 +160,7 @@ def main():
                 "PreTrained-Finetuned": 0
             }}
 
-            for x in [2]:
+            for x in [0,1,2]:
                 print(f"Training on {training_size} ECGs and validation on {len(val_loader.dataset)} ECGs.")
                 if x == 0:
                     
@@ -212,6 +215,7 @@ def main():
                         modelName=f"{seed}_{int(args.finetuning_ratios[i]*100)}_perc_{key}",
                         logToTensorBoard=True,
                         logToWandB=args.logtowandb,
+                        augmentation=args.augmentation
 
                     )
                 elif args.task == "KCL":

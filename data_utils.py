@@ -30,8 +30,10 @@ def dataprepGenetics(args, seed):
 
     validation_patients = patientIds[validation_patient_indices]
     validation_geneticResults = geneticResults[validation_patient_indices]
+    
+    datasetloader = DataTools.ECG_Genetics_Datasetloader if not args.augmentation else DataTools.ECG_Genetics_Augs_Datasetloader
 
-    train_dataset = DataTools.ECG_Genetics_Datasetloader(dataDir, train_patients, train_geneticResults, randomCrop=True, numECGsToFind=args.numECGs)
+    train_dataset = datasetloader(dataDir, train_patients, train_geneticResults, randomCrop=True, numECGsToFind=args.numECGs)
     validation_dataset = DataTools.ECG_Genetics_Datasetloader(dataDir, validation_patients, validation_geneticResults, randomCrop=True, numECGsToFind=args.numECGs)
 
     train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True,  num_workers=args.num_workers, pin_memory=True)
@@ -112,14 +114,16 @@ def dataprepLVEF(args):
 
     patientInds = list(range(num_classification_patients))
     random.shuffle(patientInds)
-
+    
+    train_datasetoader = DataTools.PatientECGDatasetLoader if not args.augmentation else DataTools.PatientECGDatasetLoader_Augs
+    
     train_loaders = []
     dataset_lengths = []
     for i in num_finetuning:
         finetuning_patient_indices = patientInds[:i]
         finetuning_patients = pre_train_patients[finetuning_patient_indices]
 
-        dataset = DataTools.PatientECGDatasetLoader(baseDir=dataDir, patients=finetuning_patients.tolist(), normalize=normEcgs)
+        dataset = train_datasetoader(baseDir=dataDir, patients=finetuning_patients.tolist(), normalize=normEcgs)
 
         loader = torch.utils.data.DataLoader(
             dataset,

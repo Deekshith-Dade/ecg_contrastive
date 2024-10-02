@@ -32,6 +32,7 @@ parser.add_argument('--arch', default='ECG_SpatioTemporalNet1D', choices=["ECG_S
 parser.add_argument('--logtowandb', default=False, type=bool, metavar='bool', help='Log to wandb')
 parser.add_argument('--lead_groupings', action='store_true', help='Use lead groupings')
 parser.add_argument('--numECGs', default="1", type=str, metavar='N', help='Number of ECGs to use')
+parser.add_argument('--augmentation', action='store_true', help='Use augmentations during training')
 
 def seed_everything(seed=42):
     # Seed Python's built-in random module

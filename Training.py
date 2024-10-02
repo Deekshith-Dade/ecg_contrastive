@@ -41,13 +41,13 @@ def evaluate(network, dataloader, lossFun):
     return running_loss, allParams, allPredictions, allNoiseVals
 
 
-def train(model, trainDataLoader, testDataLoader, numEpoch, optimizer, modelSaveDir, modelName, logToTensorBoard,logToWandB=False, ):
+def train(model, trainDataLoader, testDataLoader, numEpoch, optimizer, modelSaveDir, modelName, logToTensorBoard,logToWandB=False, augmentation=False):
     print(f"Beginning Training for Network {model.__class__.__name__}")
     exhausted = 0
     best_auc_test = 0.5
     best_acc = 0.5
     if logToTensorBoard:
-        writer = SummaryWriter(log_dir=os.path.join(modelSaveDir, "tensorboard",modelName))
+        writer = SummaryWriter(log_dir=os.path.join(modelSaveDir, f'tensorboard{"_aug" if augmentation else ""}',modelName))
         loss_meter = AverageMeter()
 
     for ep in range(numEpoch):
@@ -88,7 +88,11 @@ def train(model, trainDataLoader, testDataLoader, numEpoch, optimizer, modelSave
         print('Evalving Train')
         currTrainLoss, allParams_train, allPredictions_train, _ = evaluate(model, trainDataLoader, loss_bce_lvef)
         print(f"Train Loss: {currTrainLoss} \n Test Loss: {currTestLoss}")
-
+        if logToTensorBoard:
+            writer.add_scalar('Loss/CurrTrainLoss', currTrainLoss, ep)
+            writer.add_scalar('Loss/CurrTestLoss', currTestLoss, ep)
+            
+            
         allParams_train = (allParams_train.clone().detach().cpu() < 40.0).long().numpy()
         allPredictions_train = allPredictions_train.clone().detach().cpu().numpy()
 
@@ -313,7 +317,9 @@ def trainNetwork_balancedClassification(network, trainDataLoader_normals, trainD
         currTrainLoss, allParams_train, allPredictions_train, _ = evaluate_balanced(network,[trainDataLoader_normals,trainDataLoader_abnormals],
 																					lossFun,lossParams,leads)
         print(f"train loss: {currTrainLoss}, val loss: {currTestLoss}")
-        
+        if logToTensorBoard:
+            writer.add_scalar('Loss/CurrTrainLoss', currTrainLoss, ep)
+            writer.add_scalar('Loss/CurrTestLoss', currTestLoss, ep)
 
         #process results
         allParams_train = allParams_train.clone().detach().cpu().numpy()
